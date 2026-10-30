@@ -1,0 +1,259 @@
+/* Глобальные адаптивные стили */
+
+* {
+  box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* ==========================================
+   ПЕРЕОПРЕДЕЛЕНИЕ СТАНДАРТНЫХ СТИЛЕЙ VITE
+   ========================================== */
+body {
+  display: block !important;
+  place-items: initial !important;
+  min-width: 0 !important;
+  width: 100%;
+}
+
+#root {
+  width: 100%;
+  max-width: 100%;
+  margin: 0;
+  padding: 0;
+  text-align: left;
+}
+
+/* Отключаем выделение текста на кнопках для тач-интерфейса */
+button {
+  user-select: none;
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+  touch-action: manipulation;
+}
+
+/* Контейнер приложения */
+.app-container {
+  padding: 2rem;
+  font-family: sans-serif;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+/* Панель управления */
+.controls-panel {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+  flex-wrap: wrap;
+}
+
+/* Карточки племён */
+.tribes-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+/* Контейнер карты */
+.map-container {
+  width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  border-radius: 12px;
+  margin-bottom: 1rem;
+}
+
+.map-container svg {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+
+/* Модальные окна */
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 1rem;
+}
+
+.modal-content {
+  background: white;
+  padding: 2rem;
+  border-radius: 12px;
+  max-width: 900px;
+  width: 100%;
+  max-height: 90vh;
+  overflow-y: auto;
+}
+
+/* Уведомления */
+.notification {
+  position: fixed;
+  padding: 1rem 1.5rem;
+  border-radius: 12px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+  z-index: 2000;
+  font-weight: bold;
+}
+
+.notification-top-right {
+  top: 20px;
+  right: 20px;
+}
+
+.notification-top-left {
+  top: 20px;
+  left: 20px;
+}
+
+/* ==========================================
+   ПЛАНШЕТЫ (768px - 1024px)
+   ========================================== */
+@media (max-width: 1024px) and (min-width: 768px) {
+  .app-container {
+    padding: 1.5rem;
+  }
+
+  .tribes-grid {
+    grid-template-columns: 1fr 1fr;
+    gap: 0.8rem;
+  }
+
+  .controls-panel {
+    gap: 0.4rem;
+  }
+
+  .controls-panel button {
+    padding: 0.7rem 1.2rem;
+    font-size: 0.9rem;
+  }
+}
+
+/* ==========================================
+   МОБИЛЬНЫЕ ТЕЛЕФОНЫ (до 768px)
+   ========================================== */
+@media (max-width: 767px) {
+  .app-container {
+    padding: 1rem;
+  }
+
+  .app-container h1 {
+    font-size: 1.5rem;
+    text-align: center;
+    margin-bottom: 1rem;
+  }
+
+  /* Карточки племён в один столбик */
+  .tribes-grid {
+    grid-template-columns: 1fr;
+    gap: 0.8rem;
+  }
+
+  /* Кнопки управления */
+  .controls-panel {
+    gap: 0.4rem;
+  }
+
+  .controls-panel button {
+    padding: 0.6rem 1rem;
+    font-size: 0.85rem;
+    min-height: 44px; /* Минимальный размер для тача */
+  }
+
+  /* Кнопки выбора племени на всю ширину */
+  .tribe-buttons {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.4rem;
+    width: 100%;
+    margin-top: 0.5rem;
+  }
+
+  .tribe-buttons button {
+    padding: 0.5rem;
+    font-size: 0.8rem;
+  }
+
+  /* Модальные окна на весь экран */
+  .modal-content {
+    padding: 1rem;
+    max-height: 95vh;
+  }
+
+  /* Уведомления компактнее */
+  .notification {
+    padding: 0.7rem 1rem;
+    font-size: 0.85rem;
+    max-width: calc(100vw - 2rem);
+  }
+
+  .notification-top-right {
+    top: 10px;
+    right: 10px;
+  }
+
+  .notification-top-left {
+    top: 10px;
+    left: 10px;
+  }
+
+  /* Заголовки статистики */
+  .stats-bar {
+    flex-direction: column;
+    gap: 0.5rem;
+    font-size: 0.95rem;
+  }
+
+  /* Блок текущего племени */
+  .current-tribe-banner {
+    font-size: 1.1rem;
+    padding: 0.8rem;
+  }
+}
+
+/* ==========================================
+   ОЧЕНЬ МАЛЕНЬКИЕ ЭКРАНЫ (до 400px)
+   ========================================== */
+@media (max-width: 399px) {
+  .app-container {
+    padding: 0.5rem;
+  }
+
+  .controls-panel button {
+    padding: 0.5rem 0.8rem;
+    font-size: 0.8rem;
+  }
+
+  .tribe-buttons {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Анимации для уведомлений */
+@keyframes slideInRight {
+  from { transform: translateX(100%); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+@keyframes slideInLeft {
+  from { transform: translateX(-100%); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+.animate-slide-right {
+  animation: slideInRight 0.3s ease-out;
+}
+
+.animate-slide-left {
+  animation: slideInLeft 0.3s ease-out;
+}
