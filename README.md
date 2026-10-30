@@ -1,32 +1,165 @@
-# React + TypeScript + Vite
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+# 🏰 Экономическая Империя
 
-Currently, two official plugins are available:
+**Образовательная стратегия по истории, экономике и финансовой грамотности для школьников (6–9 классы)**
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+[![Vite](https://img.shields.io/badge/Vite-6.x-646CFF?logo=vite&logoColor=white)](https://vite.dev/)
+[![React](https://img.shields.io/badge/React-18.x-61DAFB?logo=react&logoColor=black)](https://react.dev/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+[![Zustand](https://img.shields.io/badge/Zustand-4.x-453f39?logo=react&logoColor=white)](https://github.com/pmndrs/zustand)
+[![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-## React Compiler
+> Интерактивная игра, превращающая изучение Российской Империи XVIII века в увлекательную экономическую стратегию. Ученики управляют торговыми артелями, строят города, торгуют, берут кредиты и соревнуются за Очки Империи.
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+## ✨ Ключевые возможности
 
-## Expanding the Oxlint configuration
+### 🎮 Игровые механики
+- **Карта 28 секторов** с тремя регионами: Сибирь 🌲, Русская Америка 🌊, Закавказье 🐫
+- **4 исторические артели**: Строгановы, Шелихов, Карабахские купцы, Демидовы
+- **7 типов зданий** с ограничениями по биомам (Верфь только на побережье, Таможня — на Шёлковом пути)
+- **Монополии** за контроль регионов и биомов (+4…+8 ОИ + пассивный доход)
+- **Случайные события** (12 карточек): от «Удачной охоты» до «Налоговой ревизии»
 
-If you are developing a production application, we recommend enabling type-aware lint rules by installing `oxlint-tsgolint` and editing `.oxlintrc.json`:
+### 💰 Финансовая грамотность
+- **Банковская система**: векселя (60%), депозиты (+30%), паи (акции), залоговые кредиты (40%)
+- **Рынок территорий**: продажа секторов, обмен с автоматической оценкой стоимости, аукционы
+- **Торговля** между артелями с взаимовыгодным обменом ресурсов
 
-```json
-{
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["react", "typescript", "oxc"],
-  "options": {
-    "typeAware": true
-  },
-  "rules": {
-    "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
-}
+### 📚 Образовательная интеграция
+- **15 готовых заданий** по истории, экономике, географии и математике
+- **Привязка к ФГОС** с кодами тем и требованиями к знаниям/умениям
+- **Финансовая грамотность**: 10 тем с ключевыми понятиями и практическими навыками
+- **QMD-отчёты** для учителей с автоматической проверкой критериев успеха
+- **Интерактивный туториал** при первом запуске
+
+### 👨‍🏫 Инструменты учителя
+- Панель управления с расширением карты
+- Журнал действий с фильтрацией и экспортом в CSV
+- Статистика по каждой артели
+- Импорт/экспорт собственных заданий через JSON
+- Защита от дубликатов заданий по уникальному ID
+
+## 🚀 Быстрый старт
+
+### Требования
+- Node.js ≥ 18 или Bun ≥ 1.0
+- npm, yarn или bun
+
+### Установка и запуск
+
+```bash
+# Клонируйте репозиторий
+git clone https://github.com/YOUR_USERNAME/eco-empire.git
+cd eco-empire
+
+# Установите зависимости
+bun install    # или npm install
+
+# Запустите dev-сервер
+bun run dev    # или npm run dev
 ```
 
-See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
+Откройте [http://localhost:5173](http://localhost:5173) в браузере.
+
+### Сборка для продакшена
+
+```bash
+bun run build
+bun run preview  # локальный предпросмотр сборки
+```
+
+## 🌐 Деплой на Vercel
+
+```bash
+# Создайте vercel.json
+echo '{"rewrites":[{"source":"/(.*)","destination":"/index.html"}]}' > vercel.json
+
+# Задеплойте
+npx vercel --prod
+```
+
+Через 1–2 минуты получите ссылку вида `eco-empire.vercel.app`.
+
+## 📖 Как использовать на уроке
+
+### Формат «Игровая лаборатория» (90 минут)
+
+| Этап | Время | Действие |
+|------|-------|----------|
+| Теория | 15 мин | Учитель объясняет тему, демонстрирует игру |
+| Инструктаж | 5 мин | Выбор задания в панели учителя, запуск |
+| Игра | 30–40 мин | Ученики играют в группах на планшетах |
+| Анализ | 15 мин | Статистика на проекторе, экспорт отчёта |
+| Рефлексия | 10 мин | Обсуждение вопросов из задания |
+
+### Создание собственных заданий
+
+1. Нажмите **«📝 Скачать шаблон»** в панели учителя
+2. Откройте `assignment-template.json` в текстовом редакторе
+3. Заполните поля (ID должен быть уникальным!)
+4. Нажмите **«📥 Импорт заданий»** и выберите файл
+
+Подробная схема JSON-задания доступна в [документации](docs/assignments-schema.md).
+
+## 🏗️ Архитектура проекта
+
+```
+src/
+├── components/          # UI-компоненты
+│   ├── GameMap.tsx      # Карта с SVG-рендерингом
+│   ├── HexTile.tsx      # Гексагон сектора
+│   ├── TeacherPanel.tsx # Панель учителя
+│   ├── BankModal.tsx    # Банковские операции
+│   ├── SectorSaleModal.tsx    # Продажа секторов
+│   ├── SectorExchangeModal.tsx # Обмен секторами
+│   ├── Tutorial.tsx     # Интерактивный туториал
+│   └── RulesModal.tsx   # Полные правила игры
+├── store/
+│   ├── gameStore.ts     # Zustand-стор (ядро логики)
+│   └── bank.ts          # Банковские операции
+├── data/
+│   ├── assignments.ts   # 15 встроенных заданий
+│   ├── fgosTopics.ts    # Темы ФГОС + УУД
+│   └── financialLiteracy.ts # Темы финграмотности
+├── utils/
+│   ├── fgosReport.ts    # Генерация QMD-отчётов
+│   ├── assignmentImport.ts # Импорт/экспорт заданий
+│   └── sounds.ts        # Web Audio API
+└── types/index.ts       # TypeScript-типы
+```
+
+### Таблица связности карты
+
+Связность секторов определяется явной таблицей `ADJACENCY` в `gameStore.ts`, а не расчётом расстояний. Это гарантирует корректную работу межрегиональных мостов:
+
+```
+Сибирь ↔ Америка:    #3↔#10, #7↔#12, #9↔#14
+Америка ↔ Закавказье: #11↔#18, #13↔#21, #15↔#24, #17↔#26
+```
+
+## 🎯 Целевая аудитория
+
+- **Ученики 6–9 классов** — игроки
+- **Учителя истории, экономики, географии, математики** — организаторы
+- **Методисты** — создатели новых заданий
+
+## 📄 Лицензия
+
+MIT License. См. [LICENSE](LICENSE).
+
+## 🤝 Вклад в проект
+
+Pull requests приветствуются! Пожалуйста:
+1. Создайте форк
+2. Создайте ветку: `git checkout -b feature/my-feature`
+3. Зафиксируйте изменения: `git commit -m 'Add my feature'`
+4. Запушьте: `git push origin feature/my-feature`
+5. Откройте Pull Request
+
+---
+
+<div align="center">
+
+**🏰 Создано для образования • Открытый исходный код • MIT License**
+
+*Если проект полезен — поставьте ⭐ на GitHub!*

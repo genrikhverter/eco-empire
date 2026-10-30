@@ -16,7 +16,7 @@ import type {
 } from '../types';
 
 // === ТАБЛИЦА СВЯЗНОСТИ СЕКТОРОВ ===
-const ADJACENCY: Record<number, number[]> = {
+export const ADJACENCY: Record<number, number[]> = {
   // СИБИРЬ
   0: [1, 4],
   1: [0, 2, 4, 5],
@@ -536,20 +536,79 @@ export const useGameStore = create<GameStore>()(
       expandMap: () => {
         const state = get();
         const level = state.expansionLevel;
-        const baseX = 535 + level * 130;
-        const startId = 28 + level * 8;
+        const startId = state.sectors.length;
+
+        // Базовая позиция нового кластера (правее Закавказья)
+        const baseX = 1200 + level * 280;
+
+        // 8 новых секторов: 4 пары по 2 тайла для равномерного доступа
         const extra: Sector[] = [
-          { id: startId, type: 'forest', ownerId: null, buildingId: null, x: baseX, y: 100 },
-          { id: startId + 1, type: 'mountain', ownerId: null, buildingId: null, x: baseX + 44, y: 175 },
-          { id: startId + 2, type: 'coast', ownerId: null, buildingId: null, x: baseX, y: 275 },
-          { id: startId + 3, type: 'forest', ownerId: null, buildingId: null, x: baseX + 87, y: 275 },
-          { id: startId + 4, type: 'mountain', ownerId: null, buildingId: null, x: baseX + 44, y: 350 },
-          { id: startId + 5, type: 'silk_road', ownerId: null, buildingId: null, x: baseX, y: 425 },
-          { id: startId + 6, type: 'plain', ownerId: null, buildingId: null, x: baseX + 87, y: 425 },
-          { id: startId + 7, type: 'forest', ownerId: null, buildingId: null, x: baseX + 44, y: 500 },
+          // Пара 1: Сибирский кластер (мост от Сибири)
+          { id: startId,     type: 'forest',   ownerId: null, buildingId: null, x: baseX,      y: 60 },
+          { id: startId + 1, type: 'mountain', ownerId: null, buildingId: null, x: baseX + 110, y: 60 },
+          // Пара 2: Американский кластер (мост от Америки)
+          { id: startId + 2, type: 'coast',    ownerId: null, buildingId: null, x: baseX,      y: 185 },
+          { id: startId + 3, type: 'forest',   ownerId: null, buildingId: null, x: baseX + 110, y: 185 },
+          // Пара 3: Закавказский кластер (мост от Закавказья)
+          { id: startId + 4, type: 'silk_road', ownerId: null, buildingId: null, x: baseX,      y: 310 },
+          { id: startId + 5, type: 'plain',    ownerId: null, buildingId: null, x: baseX + 110, y: 310 },
+          // Пара 4: Центральный хаб (связывает все три кластера)
+          { id: startId + 6, type: 'mountain', ownerId: null, buildingId: null, x: baseX + 55,  y: 122 },
+          { id: startId + 7, type: 'coast',    ownerId: null, buildingId: null, x: baseX + 55,  y: 248 },
         ];
-        set({ sectors: [...state.sectors, ...extra], expansionLevel: level + 1 });
-        get().addLog('capture', `🗺️ Учитель расширил карту до ${state.sectors.length + 8} тайлов`, null);
+
+        // === ДИНАМИЧЕСКОЕ ОБНОВЛЕНИЕ ADJACENCY ===
+        const newAdj: Record<number, number[]> = {};
+
+        // Внутренние связи пар
+        newAdj[startId]     = [startId + 1, startId + 6];         // П1 ↔ П1, П1 ↔ Хаб
+        newAdj[startId + 1] = [startId, startId + 6];             // П1 ↔ П1, П1 ↔ Хаб
+        newAdj[startId + 2] = [startId + 3, startId + 6, startId + 7]; // П2 ↔ П2, П2 ↔ Хаб
+        newAdj[startId + 3] = [startId + 2, startId + 6, startId + 7]; // П2 ↔ П2, П2 ↔ Хаб
+        newAdj[startId + 4] = [startId + 5, startId + 7];         // П3 ↔ П3, П3 ↔ Хаб
+        newAdj[startId + 5] = [startId + 4, startId + 7];         // П3 ↔ П3, П3 ↔ Хаб
+        newAdj[startId + 6] = [startId, startId + 1, startId + 2, startId + 3, startId + 7]; // Хаб ↔ П1, П2, П3
+        newAdj[startId + 7] = [startId + 2, startId + 3, startId + 4, startId + 5, startId + 6]; // Хаб ↔ П2, П3, П1
+
+        // Мосты от базовых регионов к новым кластерам
+        if (level === 0) {
+          // Первое расширение: мосты от базовой карты
+          // Сибирь → Пара 1
+          newAdj[startId].push(3);
+          newAdj[startId + 1].push(7);
+          // Америка → Пара 2
+          newAdj[startId + 2].push(11);
+          newAdj[startId + 3].push(15);
+          // Закавказье → Пара 3
+          newAdj[startId + 4].push(20);
+          newAdj[startId + 5].push(23);
+        } else {
+          // Последующие расширения: мосты от предыдущего кластера
+          const prev = startId - 8;
+          newAdj[startId].push(prev + 1);       // П1 ← пред. П1
+          newAdj[startId + 2].push(prev + 3);   // П2 ← пред. П2
+          newAdj[startId + 4].push(prev + 5);   // П3 ← пред. П3
+          newAdj[startId + 6].push(prev + 6);   // Хаб ← пред. Хаб
+          newAdj[startId + 7].push(prev + 7);   // Хаб ← пред. Хаб
+        }
+
+        // Применяем новые связи к глобальной таблице ADJACENCY
+        for (const [id, neighbors] of Object.entries(newAdj)) {
+          const numId = Number(id);
+          (ADJACENCY as Record<number, number[]>)[numId] = neighbors;
+          // Обратные связи
+          for (const nId of neighbors) {
+            if (!ADJACENCY[nId]) (ADJACENCY as Record<number, number[]>)[nId] = [];
+            if (!ADJACENCY[nId].includes(numId)) ADJACENCY[nId].push(numId);
+          }
+        }
+
+        set({
+          sectors: [...state.sectors, ...extra],
+          expansionLevel: level + 1,
+        });
+
+        get().addLog('capture', `🗺️ Карта расширена! +8 тайлов (всего: ${state.sectors.length + 8}). Уровень: ${level + 1}`, null);
         get().refreshMonopolies();
         get().saveGame();
         return true;
