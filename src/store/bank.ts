@@ -6,11 +6,14 @@ export const LOAN_RATE = 1.6;
 export const DEPOSIT_TERM = 3;
 export const DEPOSIT_RATE = 1.3;
 
-export const takeLoan = (amount: number): boolean => {
+export const takeLoan = (amount: number, pledgedSectorId?: number): boolean => {
   const state = useGameStore.getState();
   if (!Number.isInteger(amount) || amount <= 0) return false;
 
-  const repayAmount = Math.ceil(amount * LOAN_RATE);
+  // Если есть залог — процент ниже (40% вместо 60%)
+  const rate = pledgedSectorId ? 1.4 : LOAN_RATE;
+  const repayAmount = Math.ceil(amount * rate);
+
   const loan: Loan = {
     id: `loan_${Date.now()}`,
     tribeId: state.currentTribeId,
@@ -19,25 +22,54 @@ export const takeLoan = (amount: number): boolean => {
     takenTurn: state.turn,
     dueTurn: state.turn + LOAN_TERM,
     repaid: false,
+    pledgedSectorId,
   };
 
-  useGameStore.setState({
-    tribes: state.tribes.map((t) =>
-      t.id === state.currentTribeId
-        ? { ...t, resources: { ...t.resources, money: t.resources.money + amount } }
-        : t
-    ),
-    loans: [...state.loans, loan],
-  });
+  // Если есть залог — передаём сектор банку (ownerId = null, но помечаем в loan)
+  if (pledgedSectorId) {
+    const sector = state.sectors.find((s) => s.id === pledgedSectorId);
+    if (!sector || sector.ownerId !== state.currentTribeId) return false;
 
-  useGameStore.getState().addLog(
-    'loan_take',
-    `📜 Взял вексель: +${amount} 💰, вернуть ${repayAmount} 💰 до хода ${loan.dueTurn}`,
-    state.currentTribeId
-  );
+    useGameStore.setState({
+      sectors: state.sectors.map((s) =>
+        s.id === pledgedSectorId ? { ...s, ownerId: null } : s
+      ),
+      tribes: state.tribes.map((t) =>
+        t.id === state.currentTribeId
+          ? {
+              ...t,
+              resources: { ...t.resources, money: t.resources.money + amount },
+              sectors: t.sectors.filter((id) => id !== pledgedSectorId),
+            }
+          : t
+      ),
+      loans: [...state.loans, loan],
+    });
+
+    useGameStore.getState().addLog(
+      'sector_pledge',
+      `🏛️ Залоговый кредит: +${amount} 💰 (под залог сектора #${pledgedSectorId}), вернуть ${repayAmount} 💰`,
+      state.currentTribeId
+    );
+  } else {
+    useGameStore.setState({
+      tribes: state.tribes.map((t) =>
+        t.id === state.currentTribeId
+          ? { ...t, resources: { ...t.resources, money: t.resources.money + amount } }
+          : t
+      ),
+      loans: [...state.loans, loan],
+    });
+
+    useGameStore.getState().addLog(
+      'loan_take',
+      `📜 Вексель: +${amount} 💰, вернуть ${repayAmount} 💰 до хода ${loan.dueTurn}`,
+      state.currentTribeId
+    );
+  }
+
   return true;
 };
-
 export const repayLoan = (loanId: string, silent = false): boolean => {
   const state = useGameStore.getState();
   const loan = state.loans.find((l) => l.id === loanId && !l.repaid);
@@ -167,6 +199,35 @@ export const issueShare = (sectorId: number, price: number, dividendPerTurn: num
 
 const defaultLoan = (loan: Loan): number => {
   const state = useGameStore.getState();
+
+  // Если это залоговый кредит — сектор уже у банка, просто помечаем как невозврат
+  if (loan.pledgedSectorId) {
+    useGameStore.setState({
+      loans: state.loans.map((l) => (l.id === loan.id ? { ...l, repaid: true } : l)),
+    });
+
+    useGameStore.getState().addLog(
+      'default',
+      `⚠️ ДЕФОЛТ по залоговому кредиту! Сектор #${loan.pledgedSectorId} конфискован банком`,
+      loan.tribeId
+    );
+
+    // Выставляем сектор на аукцион (продаём первому покупателю за 50% стоимости)
+    const sectorValue = useGameStore.getState().calculateSectorValue(loan.pledgedSectorId);
+    const auctionPrice = Math.round(sectorValue * 0.5);
+
+    useGameStore.getState().listSectorForSale(loan.pledgedSectorId, auctionPrice);
+    // Временно делаем банк "владельцем" для продажи
+    useGameStore.setState({
+      sectors: state.sectors.map((s) =>
+        s.id === loan.pledgedSectorId ? { ...s, ownerId: loan.tribeId } : s
+      ),
+    });
+
+    return loan.pledgedSectorId;
+  }
+
+  // Обычный дефолт (без залога)
   const tribeSectors = state.sectors.filter((s) => s.ownerId === loan.tribeId);
   const target = tribeSectors.find((s) => s.buildingId === null) ?? tribeSectors[0];
   if (!target) return -1;
@@ -202,6 +263,41 @@ const defaultLoan = (loan: Loan): number => {
   return target.id;
 };
 
+export const repayPledgedLoan = (loanId: string): boolean => {
+  const state = useGameStore.getState();
+  const loan = state.loans.find((l) => l.id === loanId && !l.repaid && l.pledgedSectorId);
+  if (!loan) return false;
+
+  const tribe = state.tribes.find((t) => t.id === loan.tribeId);
+  if (!tribe || tribe.resources.money < loan.repayAmount) return false;
+
+  // Возвращаем сектор владельцу
+  useGameStore.setState({
+    tribes: state.tribes.map((t) =>
+      t.id === loan.tribeId
+        ? {
+            ...t,
+            resources: { ...t.resources, money: t.resources.money - loan.repayAmount },
+            sectors: [...t.sectors, loan.pledgedSectorId!],
+          }
+        : t
+    ),
+    sectors: state.sectors.map((s) =>
+      s.id === loan.pledgedSectorId ? { ...s, ownerId: loan.tribeId } : s
+    ),
+    loans: state.loans.map((l) => (l.id === loanId ? { ...l, repaid: true } : l)),
+    sectorListings: state.sectorListings.filter((l) => l.sectorId !== loan.pledgedSectorId),
+  });
+
+  useGameStore.getState().addLog(
+    'loan_repay',
+    `✅ Залоговый кредит погашен: −${loan.repayAmount} 💰, сектор #${loan.pledgedSectorId} возвращён`,
+    loan.tribeId
+  );
+
+  useGameStore.getState().refreshMonopolies();
+  return true;
+};
 export const processBankPhase = () => {
   const state = useGameStore.getState();
   const messages: string[] = [];

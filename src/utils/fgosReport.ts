@@ -390,6 +390,60 @@ ${assignment.tips.map((t) => `- ${t}`).join('\n')}
 `;
   }
 
+  // === РЫНОК ТЕРРИТОРИЙ ===
+  const activeListings = state.sectorListings.filter((l) => l.active);
+  const completedExchanges = state.sectorExchanges.filter((e) => e.status === 'accepted');
+  const pledgedLoans = state.loans.filter((l) => l.pledgedSectorId && !l.repaid);
+
+  if (activeListings.length > 0 || completedExchanges.length > 0 || pledgedLoans.length > 0) {
+    qmd += `# 🏷️ Рынок территорий
+
+`;
+
+    if (activeListings.length > 0) {
+      qmd += `## Активные объявления о продаже
+
+| Сектор | Продавец | Цена | Выставлен на ходе |
+|--------|----------|-----:|------------------:|
+`;
+      activeListings.forEach((l) => {
+        const seller = state.tribes.find((t) => t.id === l.sellerId);
+        qmd += `| #${l.sectorId} | ${seller?.name || '?'} | 💰${l.price} | ${l.listedTurn} |\n`;
+      });
+      qmd += `\n`;
+    }
+
+    if (completedExchanges.length > 0) {
+      qmd += `## Совершённые обмены
+
+| Сектор 1 | Владелец 1 | Сектор 2 | Владелец 2 | Доплата | Ход |
+|----------|-----------|----------|-----------|---------|----:|
+`;
+      completedExchanges.forEach((e) => {
+        const t1 = state.tribes.find((t) => t.id === e.owner1Id);
+        const t2 = state.tribes.find((t) => t.id === e.owner2Id);
+        const payStr = e.additionalPayment
+          ? `💰${e.additionalPayment.amount} (${e.additionalPayment.fromId === e.owner1Id ? t1?.name : t2?.name} → ${e.additionalPayment.fromId === e.owner1Id ? t2?.name : t1?.name})`
+          : '—';
+        qmd += `| #${e.sector1Id} | ${t1?.name || '?'} | #${e.sector2Id} | ${t2?.name || '?'} | ${payStr} | ${e.createdTurn} |\n`;
+      });
+      qmd += `\n`;
+    }
+
+    if (pledgedLoans.length > 0) {
+      qmd += `## Залоговые кредиты
+
+| Заёмщик | Сектор залога | Сумма | Возврат | Срок до хода |
+|---------|--------------|------:|--------:|-------------:|
+`;
+      pledgedLoans.forEach((l) => {
+        const borrower = state.tribes.find((t) => t.id === l.tribeId);
+        qmd += `| ${borrower?.name || '?'} | #${l.pledgedSectorId} | 💰${l.amount} | 💰${l.repayAmount} | ${l.dueTurn} |\n`;
+      });
+      qmd += `\n`;
+    }
+  }
+
   // === Рекомендации учителя ===
   qmd += `# 📝 Рекомендации учителя
 

@@ -20,7 +20,10 @@ export type LogAction =
   | 'event'
   | 'monopoly'
   | 'default'
-  | 'turn_start';
+  | 'turn_start'
+  | 'sector_sale'
+  | 'sector_exchange'
+  | 'sector_pledge';
 
 export interface Building {
   id: string;
@@ -60,6 +63,7 @@ export interface Loan {
   takenTurn: number;
   dueTurn: number;
   repaid: boolean;
+  pledgedSectorId?: number; // Для залоговых кредитов
 }
 
 export interface Deposit {
@@ -94,6 +98,32 @@ export interface Monopoly {
   resourceIncome?: Partial<Record<ResourceType, number>>;
   awardedTurn: number;
   active: boolean;
+}
+
+// НОВОЕ: Объявление о продаже сектора
+export interface SectorListing {
+  id: string;
+  sectorId: number;
+  sellerId: string;
+  price: number;
+  listedTurn: number;
+  active: boolean;
+}
+
+// НОВОЕ: Предложение обмена секторами
+export interface SectorExchange {
+  id: string;
+  sector1Id: number;
+  sector2Id: number;
+  owner1Id: string;
+  owner2Id: string;
+  additionalPayment?: {
+    fromId: string;
+    toId: string;
+    amount: number;
+  };
+  status: 'pending' | 'accepted' | 'rejected';
+  createdTurn: number;
 }
 
 export interface LogEntry {
@@ -140,4 +170,6 @@ export interface GameState {
   lastEvent: GameEvent | null;
   expansionLevel: number;
   logs: LogEntry[];
+  sectorListings: SectorListing[]; // НОВОЕ
+  sectorExchanges: SectorExchange[]; // НОВОЕ
 }

@@ -32,6 +32,9 @@ const ACTION_LABELS: Record<LogAction, string> = {
   monopoly: '🏆 Монополия',
   default: '⚠️ Дефолт',
   turn_start: '⏭️ Начало хода',
+  sector_sale: '🏷️ Продажа сектора',
+  sector_exchange: '🔄 Обмен секторами',
+  sector_pledge: '🏛️ Залог сектора',
 };
 
 export const TeacherPanel = ({ onClose }: TeacherPanelProps) => {
@@ -133,6 +136,9 @@ export const TeacherPanel = ({ onClose }: TeacherPanelProps) => {
     localStorage.setItem('eco-empire-active-assignment', JSON.stringify(assignment));
 
     alert(`✅ Задание запущено!\n\n🎯 Цель: ${assignment.objective}\n⏱️ Время: ${assignment.duration}\n\nУдачи ученикам!`);
+
+    // Закрываем панель учителя после запуска задания
+    onClose();
   };
 
   const handleImportAssignments = () => {

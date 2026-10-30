@@ -6,20 +6,55 @@ import type {
   Building,
   BiomeType,
   GameEvent,
-  Trade,
   Sector,
   Tribe,
   Monopoly,
   MonopolyKind,
   LogEntry,
   LogAction,
+  SectorExchange,
 } from '../types';
 
-export const NEIGHBOR_MAX_DIST = 90;
+// === ТАБЛИЦА СВЯЗНОСТИ СЕКТОРОВ ===
+const ADJACENCY: Record<number, number[]> = {
+  // СИБИРЬ
+  0: [1, 4],
+  1: [0, 2, 4, 5],
+  2: [1, 3, 5, 6],
+  3: [2, 6, 7, 10],
+  4: [0, 1, 5, 8],
+  5: [1, 2, 4, 6, 8, 9],
+  6: [2, 3, 5, 7, 9],
+  7: [3, 6, 9, 12],
+  8: [4, 5, 9],
+  9: [5, 6, 7, 8, 14],
+  // РУССКАЯ АМЕРИКА
+  10: [3, 11, 12],
+  11: [10, 13, 18],
+  12: [7, 10, 13, 14],
+  13: [11, 12, 14, 15, 21],
+  14: [9, 12, 15, 16],
+  15: [13, 14, 16, 17, 24],
+  16: [14, 15, 17],
+  17: [15, 16, 26],
+  // ЗАКАВКАЗЬЕ И ТУРКЕСТАН
+  18: [11, 19, 21],
+  19: [18, 20, 21, 22],
+  20: [19, 23],
+  21: [13, 18, 19, 22, 24],
+  22: [19, 21, 23, 24, 25],
+  23: [20, 22, 25, 26],
+  24: [15, 21, 22, 25, 27],
+  25: [22, 23, 24, 26, 27],
+  26: [17, 23, 25, 27],
+  27: [24, 25, 26],
+};
+
+export const NEIGHBOR_MAX_DIST = 125;
 
 export const isAdjacentSector = (a: Sector, b: Sector): boolean => {
-  const d = Math.hypot(a.x - b.x, a.y - b.y);
-  return d > 0 && d <= NEIGHBOR_MAX_DIST;
+  const neighbors = ADJACENCY[a.id];
+  return neighbors ? neighbors.includes(b.id) : false;
 };
 
 export const getCaptureTargets = (
@@ -28,13 +63,29 @@ export const getCaptureTargets = (
   tribeId: string
 ): Set<number> => {
   void tribes;
-  const owned = sectors.filter((s) => s.ownerId === tribeId);
+  const ownedIds = new Set(
+    sectors.filter((s) => s.ownerId === tribeId).map((s) => s.id)
+  );
   const result = new Set<number>();
-  for (const s of sectors) {
-    if (s.ownerId !== null) continue;
-    if (owned.some((o) => isAdjacentSector(o, s))) result.add(s.id);
+
+  for (const ownedId of ownedIds) {
+    const neighbors = ADJACENCY[ownedId];
+    if (!neighbors) continue;
+    for (const neighborId of neighbors) {
+      const sector = sectors.find((s) => s.id === neighborId);
+      if (sector && sector.ownerId === null) {
+        result.add(neighborId);
+      }
+    }
   }
+
   return result;
+};
+
+export const REGION_BG_COLORS: Record<string, string> = {
+  siberia: '#dcfce7',
+  america: '#dbeafe',
+  turkestan: '#fef3c7',
 };
 
 interface GameStore extends GameState {
@@ -46,6 +97,8 @@ interface GameStore extends GameState {
   bankToast: string | null;
   capturesThisTurn: number;
   expansionLevel: number;
+  mapExpanded: boolean;
+
   nextTurn: () => void;
   setCurrentTribe: (tribeId: string) => void;
   addResource: (tribeId: string, resource: ResourceType, amount: number) => void;
@@ -66,6 +119,19 @@ interface GameStore extends GameState {
   refreshMonopolies: () => void;
   expandMap: () => boolean;
   addLog: (action: LogAction, details: string, tribeId?: string | null) => void;
+
+  calculateSectorValue: (sectorId: number) => number;
+  listSectorForSale: (sectorId: number, price: number) => boolean;
+  cancelSectorListing: (listingId: string) => boolean;
+  buySector: (listingId: string) => boolean;
+  proposeSectorExchange: (
+    sector1Id: number,
+    sector2Id: number,
+    additionalPayment?: { fromId: string; toId: string; amount: number }
+  ) => string | null;
+  acceptSectorExchange: (exchangeId: string) => boolean;
+  rejectSectorExchange: (exchangeId: string) => boolean;
+
   saveGame: () => void;
   loadGame: () => boolean;
   resetGame: () => void;
@@ -82,63 +148,28 @@ const BIOME_BASE_INCOME: Record<BiomeType, Partial<Record<ResourceType, number>>
 };
 
 const buildingsCatalog: Building[] = [
-  {
-    id: 'fort', type: 'fort', name: 'Острог', icon: '🏰',
-    cost: { fur: 3, ore: 2 }, income: { fur: 2, food: 1 }, score: 2,
-    allowedBiomes: null,
-    description: 'Базовое поселение. Можно строить где угодно.'
-  },
-  {
-    id: 'factory', type: 'factory', name: 'Фактория', icon: '🏪',
-    cost: { fabric: 4, ore: 2 }, income: { money: 3 }, score: 3,
-    allowedBiomes: ['forest', 'coast'],
-    description: 'Торговый пост. Только в Тайге или на Побережье.'
-  },
-  {
-    id: 'mission', type: 'mission', name: 'Миссия', icon: '⛪',
-    cost: { fabric: 3, food: 3 }, income: {}, score: 2,
-    allowedBiomes: null,
-    description: 'Даёт +1 ОИ за каждое соседнее здание.'
-  },
-  {
-    id: 'shipyard', type: 'shipyard', name: 'Верфь', icon: '🚢',
-    cost: { ore: 5, fur: 3 }, income: { money: 2 }, score: 4,
-    allowedBiomes: ['coast'],
-    description: 'Строительство кораблей. Только на Побережье.'
-  },
-  {
-    id: 'stable', type: 'stable', name: 'Конный двор', icon: '🐎',
-    cost: { food: 4, fabric: 2 }, income: { fur: 2 }, score: 2,
-    allowedBiomes: ['plain'],
-    description: 'Разведение лошадей. Только в Степи.'
-  },
-  {
-    id: 'customs', type: 'customs', name: 'Таможня', icon: '🏛️',
-    cost: { money: 5, ore: 3, fabric: 2 }, income: { money: 3 }, score: 5,
-    allowedBiomes: ['silk_road'],
-    description: 'Сбор пошлин. Только на Шёлковом пути.'
-  },
-  {
-    id: 'caravanserai', type: 'caravanserai', name: 'Караван-сарай', icon: '🐫',
-    cost: { fabric: 4, food: 3 }, income: { money: 2 }, score: 4,
-    allowedBiomes: ['plain', 'silk_road'],
-    description: 'Гостиница для купцов. В Степи или на Шёлковом пути.'
-  },
+  { id: 'fort', type: 'fort', name: 'Острог', icon: '🏰', cost: { fur: 3, ore: 2 }, income: { fur: 2, food: 1 }, score: 2, allowedBiomes: null, description: 'Базовое поселение.' },
+  { id: 'factory', type: 'factory', name: 'Фактория', icon: '🏪', cost: { fabric: 4, ore: 2 }, income: { money: 3 }, score: 3, allowedBiomes: ['forest', 'coast'], description: 'Торговый пост.' },
+  { id: 'mission', type: 'mission', name: 'Миссия', icon: '⛪', cost: { fabric: 3, food: 3 }, income: {}, score: 2, allowedBiomes: null, description: 'Религиозный центр.' },
+  { id: 'shipyard', type: 'shipyard', name: 'Верфь', icon: '🚢', cost: { ore: 5, fur: 3 }, income: { money: 2 }, score: 4, allowedBiomes: ['coast'], description: 'Строительство кораблей.' },
+  { id: 'stable', type: 'stable', name: 'Конный двор', icon: '🐎', cost: { food: 4, fabric: 2 }, income: { fur: 2 }, score: 2, allowedBiomes: ['plain'], description: 'Разведение лошадей.' },
+  { id: 'customs', type: 'customs', name: 'Таможня', icon: '🏛️', cost: { money: 5, ore: 3, fabric: 2 }, income: { money: 3 }, score: 5, allowedBiomes: ['silk_road'], description: 'Сбор пошлин.' },
+  { id: 'caravanserai', type: 'caravanserai', name: 'Караван-сарай', icon: '🐫', cost: { fabric: 4, food: 3 }, income: { money: 2 }, score: 4, allowedBiomes: ['plain', 'silk_road'], description: 'Гостиница для купцов.' },
 ];
 
 const eventsCatalog: GameEvent[] = [
   { id: 'good_hunt', name: 'Удачная охота', description: 'Ваши охотники вернулись с богатой добычей!', icon: '🦊', type: 'positive', effect: { fur: 3 } },
   { id: 'ore_discovery', name: 'Открытие месторождения', description: 'На ваших землях найдена руда!', icon: '⚒️', type: 'positive', effect: { ore: 3 } },
-  { id: 'trade_caravan', name: 'Торговый караван', description: 'К вам прибыл торговый караван из далёких земель.', icon: '🐫', type: 'positive', effect: { fabric: 2, money: 2 } },
-  { id: 'good_harvest', name: 'Богатый урожай', description: 'В этом году урожай был особенно хорошим.', icon: '🌾', type: 'positive', effect: { food: 4 } },
-  { id: 'imperial_grant', name: 'Императорская награда', description: 'Император отметил ваши заслуги денежной наградой.', icon: '💰', type: 'positive', effect: { money: 5 } },
-  { id: 'harsh_winter', name: 'Суровая зима', description: 'Зима была суровой, запасы провизии истощились.', icon: '❄️', type: 'negative', effect: { food: -3 } },
-  { id: 'fur_price_drop', name: 'Падение цен на пушнину', description: 'На европейских рынках упали цены на пушнину.', icon: '📉', type: 'negative', effect: { money: -3 } },
-  { id: 'bandit_raid', name: 'Набег разбойников', description: 'Разбойники атаковали ваши караваны и украли ткани.', icon: '🏴‍☠️', type: 'negative', effect: { fabric: -2 } },
-  { id: 'mine_collapse', name: 'Обвал в шахте', description: 'В одной из ваших шахт произошёл обвал.', icon: '⚠️', type: 'negative', effect: { ore: -2 } },
-  { id: 'epidemic', name: 'Эпидемия', description: 'Эпидемия распространилась среди ваших работников.', icon: '🦠', type: 'negative', effect: { food: -2, fur: -1 } },
-  { id: 'tax_audit', name: 'Налоговая ревизия', description: 'Имперские чиновники наложили штраф.', icon: '📜', type: 'negative', effect: { money: -4 } },
-  { id: 'neutral_weather', name: 'Обычная погода', description: 'Ничего особенного не произошло.', icon: '☀️', type: 'neutral', effect: {} },
+  { id: 'trade_caravan', name: 'Торговый караван', description: 'К вам прибыл торговый караван.', icon: '🐫', type: 'positive', effect: { fabric: 2, money: 2 } },
+  { id: 'good_harvest', name: 'Богатый урожай', description: 'Урожай был особенно хорошим.', icon: '🌾', type: 'positive', effect: { food: 4 } },
+  { id: 'imperial_grant', name: 'Императорская награда', description: 'Император отметил ваши заслуги.', icon: '💰', type: 'positive', effect: { money: 5 } },
+  { id: 'harsh_winter', name: 'Суровая зима', description: 'Запасы провизии истощились.', icon: '❄️', type: 'negative', effect: { food: -3 } },
+  { id: 'fur_price_drop', name: 'Падение цен на пушнину', description: 'Цены на пушнину упали.', icon: '📉', type: 'negative', effect: { money: -3 } },
+  { id: 'bandit_raid', name: 'Набег разбойников', description: 'Разбойники украли ткани.', icon: '🏴‍☠️', type: 'negative', effect: { fabric: -2 } },
+  { id: 'mine_collapse', name: 'Обвал в шахте', description: 'Произошёл обвал в шахте.', icon: '⚠️', type: 'negative', effect: { ore: -2 } },
+  { id: 'epidemic', name: 'Эпидемия', description: 'Эпидемия распространилась среди работников.', icon: '🦠', type: 'negative', effect: { food: -2, fur: -1 } },
+  { id: 'tax_audit', name: 'Налоговая ревизия', description: 'Чиновники наложили штраф.', icon: '📜', type: 'negative', effect: { money: -4 } },
+  { id: 'neutral_weather', name: 'Обычная погода', description: 'Ничего особенного.', icon: '☀️', type: 'neutral', effect: {} },
 ];
 
 const MAX_TURNS = 10;
@@ -154,34 +185,37 @@ const initialGameState: GameState = {
     { id: 't4', name: 'Артель Демидовых', color: '#f87171', resources: { fur: 5, ore: 5, fabric: 5, food: 5, money: 10 }, sectors: [6], buildings: [], score: 0 },
   ],
   sectors: [
-    { id: 0, type: 'forest', ownerId: 't1', buildingId: null, x: 100, y: 100 },
-    { id: 1, type: 'mountain', ownerId: null, buildingId: null, x: 187, y: 100 },
-    { id: 2, type: 'mountain', ownerId: null, buildingId: null, x: 274, y: 100 },
-    { id: 3, type: 'mountain', ownerId: null, buildingId: null, x: 361, y: 100 },
-    { id: 4, type: 'forest', ownerId: null, buildingId: null, x: 143, y: 175 },
-    { id: 5, type: 'plain', ownerId: null, buildingId: null, x: 230, y: 175 },
-    { id: 6, type: 'mountain', ownerId: 't4', buildingId: null, x: 317, y: 175 },
-    { id: 7, type: 'forest', ownerId: null, buildingId: null, x: 404, y: 175 },
-    { id: 8, type: 'forest', ownerId: null, buildingId: null, x: 448, y: 100 },
-    { id: 9, type: 'mountain', ownerId: null, buildingId: null, x: 491, y: 175 },
-    { id: 10, type: 'coast', ownerId: null, buildingId: null, x: 100, y: 275 },
-    { id: 11, type: 'coast', ownerId: null, buildingId: null, x: 187, y: 275 },
-    { id: 12, type: 'forest', ownerId: null, buildingId: null, x: 274, y: 275 },
-    { id: 13, type: 'mountain', ownerId: null, buildingId: null, x: 361, y: 275 },
-    { id: 14, type: 'coast', ownerId: 't2', buildingId: null, x: 143, y: 350 },
-    { id: 15, type: 'forest', ownerId: null, buildingId: null, x: 230, y: 350 },
-    { id: 16, type: 'coast', ownerId: null, buildingId: null, x: 317, y: 350 },
-    { id: 17, type: 'mountain', ownerId: null, buildingId: null, x: 404, y: 350 },
-    { id: 18, type: 'silk_road', ownerId: null, buildingId: null, x: 100, y: 425 },
-    { id: 19, type: 'plain', ownerId: null, buildingId: null, x: 187, y: 425 },
-    { id: 20, type: 'mountain', ownerId: null, buildingId: null, x: 274, y: 425 },
-    { id: 21, type: 'silk_road', ownerId: 't3', buildingId: null, x: 361, y: 425 },
-    { id: 22, type: 'plain', ownerId: null, buildingId: null, x: 143, y: 500 },
-    { id: 23, type: 'forest', ownerId: null, buildingId: null, x: 230, y: 500 },
-    { id: 24, type: 'mountain', ownerId: null, buildingId: null, x: 317, y: 500 },
-    { id: 25, type: 'silk_road', ownerId: null, buildingId: null, x: 404, y: 500 },
-    { id: 26, type: 'coast', ownerId: null, buildingId: null, x: 448, y: 425 },
-    { id: 27, type: 'forest', ownerId: null, buildingId: null, x: 491, y: 500 },
+    // СИБИРЬ
+    { id: 0, type: 'forest', ownerId: 't1', buildingId: null, x: 80, y: 80 },
+    { id: 1, type: 'mountain', ownerId: null, buildingId: null, x: 190, y: 80 },
+    { id: 2, type: 'mountain', ownerId: null, buildingId: null, x: 300, y: 80 },
+    { id: 3, type: 'mountain', ownerId: null, buildingId: null, x: 410, y: 80 },
+    { id: 4, type: 'forest', ownerId: null, buildingId: null, x: 135, y: 185 },
+    { id: 5, type: 'plain', ownerId: null, buildingId: null, x: 245, y: 185 },
+    { id: 6, type: 'mountain', ownerId: 't4', buildingId: null, x: 355, y: 185 },
+    { id: 7, type: 'forest', ownerId: null, buildingId: null, x: 465, y: 185 },
+    { id: 8, type: 'forest', ownerId: null, buildingId: null, x: 80, y: 290 },
+    { id: 9, type: 'mountain', ownerId: null, buildingId: null, x: 190, y: 290 },
+    // РУССКАЯ АМЕРИКА
+    { id: 10, type: 'coast', ownerId: null, buildingId: null, x: 580, y: 80 },
+    { id: 11, type: 'coast', ownerId: null, buildingId: null, x: 690, y: 80 },
+    { id: 12, type: 'forest', ownerId: null, buildingId: null, x: 580, y: 185 },
+    { id: 13, type: 'mountain', ownerId: null, buildingId: null, x: 690, y: 185 },
+    { id: 14, type: 'coast', ownerId: 't2', buildingId: null, x: 580, y: 290 },
+    { id: 15, type: 'forest', ownerId: null, buildingId: null, x: 690, y: 290 },
+    { id: 16, type: 'coast', ownerId: null, buildingId: null, x: 580, y: 395 },
+    { id: 17, type: 'mountain', ownerId: null, buildingId: null, x: 690, y: 395 },
+    // ЗАКАВКАЗЬЕ И ТУРКЕСТАН
+    { id: 18, type: 'silk_road', ownerId: null, buildingId: null, x: 860, y: 80 },
+    { id: 19, type: 'plain', ownerId: null, buildingId: null, x: 970, y: 80 },
+    { id: 20, type: 'mountain', ownerId: null, buildingId: null, x: 1080, y: 80 },
+    { id: 21, type: 'silk_road', ownerId: 't3', buildingId: null, x: 860, y: 185 },
+    { id: 22, type: 'plain', ownerId: null, buildingId: null, x: 970, y: 185 },
+    { id: 23, type: 'forest', ownerId: null, buildingId: null, x: 1080, y: 185 },
+    { id: 24, type: 'mountain', ownerId: null, buildingId: null, x: 860, y: 290 },
+    { id: 25, type: 'silk_road', ownerId: null, buildingId: null, x: 970, y: 290 },
+    { id: 26, type: 'coast', ownerId: null, buildingId: null, x: 1080, y: 290 },
+    { id: 27, type: 'forest', ownerId: null, buildingId: null, x: 970, y: 395 },
   ],
   buildings: buildingsCatalog,
   events: eventsCatalog,
@@ -194,84 +228,22 @@ const initialGameState: GameState = {
   lastEvent: null,
   expansionLevel: 0,
   logs: [],
+  sectorListings: [],
+  sectorExchanges: [],
 };
 
-const REGION_DEFS: {
-  key: string;
-  title: string;
-  icon: string;
-  sectors: number[];
-  scoreBonus: number;
-  moneyIncome: number;
-}[] = [
-  {
-    key: 'siberia',
-    title: 'Сибирь',
-    icon: '🌲',
-    sectors: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
-    scoreBonus: 8,
-    moneyIncome: 3,
-  },
-  {
-    key: 'america',
-    title: 'Русская Америка',
-    icon: '🌊',
-    sectors: [10, 11, 12, 13, 14, 15, 16, 17],
-    scoreBonus: 7,
-    moneyIncome: 3,
-  },
-  {
-    key: 'turkestan',
-    title: 'Закавказье и Туркестан',
-    icon: '🐫',
-    sectors: [18, 19, 20, 21, 22, 23, 24, 25, 26, 27],
-    scoreBonus: 8,
-    moneyIncome: 3,
-  },
+const REGION_DEFS = [
+  { key: 'siberia', title: 'Сибирь', icon: '🌲', sectors: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9], scoreBonus: 8, moneyIncome: 3 },
+  { key: 'america', title: 'Русская Америка', icon: '🌊', sectors: [10, 11, 12, 13, 14, 15, 16, 17], scoreBonus: 7, moneyIncome: 3 },
+  { key: 'turkestan', title: 'Закавказье и Туркестан', icon: '🐫', sectors: [18, 19, 20, 21, 22, 23, 24, 25, 26, 27], scoreBonus: 8, moneyIncome: 3 },
 ];
 
-const BIOME_MONOPOLY_DEFS: Record<BiomeType, {
-  title: string;
-  icon: string;
-  scoreBonus: number;
-  moneyIncome: number;
-  resourceIncome: Partial<Record<ResourceType, number>>;
-}> = {
-  forest: {
-    title: 'Лесная монополия',
-    icon: '🌲',
-    scoreBonus: 4,
-    moneyIncome: 1,
-    resourceIncome: { fur: 1 },
-  },
-  mountain: {
-    title: 'Рудная монополия',
-    icon: '⛰️',
-    scoreBonus: 4,
-    moneyIncome: 1,
-    resourceIncome: { ore: 1 },
-  },
-  coast: {
-    title: 'Морская монополия',
-    icon: '🌊',
-    scoreBonus: 5,
-    moneyIncome: 2,
-    resourceIncome: { food: 1 },
-  },
-  plain: {
-    title: 'Степная монополия',
-    icon: '🌾',
-    scoreBonus: 5,
-    moneyIncome: 2,
-    resourceIncome: { food: 1 },
-  },
-  silk_road: {
-    title: 'Шёлковая монополия',
-    icon: '🐫',
-    scoreBonus: 6,
-    moneyIncome: 2,
-    resourceIncome: { money: 1 },
-  },
+const BIOME_MONOPOLY_DEFS: Record<BiomeType, { title: string; icon: string; scoreBonus: number; moneyIncome: number; resourceIncome: Partial<Record<ResourceType, number>> }> = {
+  forest: { title: 'Лесная монополия', icon: '🌲', scoreBonus: 4, moneyIncome: 1, resourceIncome: { fur: 1 } },
+  mountain: { title: 'Рудная монополия', icon: '⛰️', scoreBonus: 4, moneyIncome: 1, resourceIncome: { ore: 1 } },
+  coast: { title: 'Морская монополия', icon: '🌊', scoreBonus: 5, moneyIncome: 2, resourceIncome: { food: 1 } },
+  plain: { title: 'Степная монополия', icon: '🌾', scoreBonus: 5, moneyIncome: 2, resourceIncome: { food: 1 } },
+  silk_road: { title: 'Шёлковая монополия', icon: '🐫', scoreBonus: 6, moneyIncome: 2, resourceIncome: { money: 1 } },
 };
 
 const REGION_SECTOR_IDS: Record<string, number[]> = {};
@@ -282,14 +254,6 @@ for (const s of initialGameState.sectors) {
   if (!BIOME_SECTOR_IDS[s.type]) BIOME_SECTOR_IDS[s.type] = [];
   BIOME_SECTOR_IDS[s.type].push(s.id);
 }
-
-const RESOURCE_NAMES: Record<ResourceType, string> = {
-  fur: '🦊',
-  ore: '⚒️',
-  fabric: '🧵',
-  food: '🍞',
-  money: '💰',
-};
 
 export const useGameStore = create<GameStore>()(
   persist(
@@ -303,6 +267,7 @@ export const useGameStore = create<GameStore>()(
       bankToast: null,
       capturesThisTurn: 0,
       expansionLevel: 0,
+      mapExpanded: false,
 
       addLog: (action, details, tribeId = null) => {
         const state = get();
@@ -323,25 +288,20 @@ export const useGameStore = create<GameStore>()(
         const state = get();
         const tribe = state.tribes.find((t) => t.id === tribeId);
         if (!tribe) return {};
-
         const income: Partial<Record<ResourceType, number>> = {};
 
         for (const sectorId of tribe.sectors) {
           const sector = state.sectors.find((s) => s.id === sectorId);
           if (!sector) continue;
-
           const baseIncome = BIOME_BASE_INCOME[sector.type];
           for (const [resource, amount] of Object.entries(baseIncome)) {
-            const res = resource as ResourceType;
-            income[res] = (income[res] || 0) + (amount || 0);
+            income[resource as ResourceType] = (income[resource as ResourceType] || 0) + (amount || 0);
           }
-
           if (sector.buildingId) {
             const building = state.buildings.find((b) => b.id === sector.buildingId);
             if (building) {
               for (const [resource, amount] of Object.entries(building.income)) {
-                const res = resource as ResourceType;
-                income[res] = (income[res] || 0) + (amount || 0);
+                income[resource as ResourceType] = (income[resource as ResourceType] || 0) + (amount || 0);
               }
             }
           }
@@ -352,64 +312,52 @@ export const useGameStore = create<GameStore>()(
           income.money = (income.money || 0) + m.moneyIncome;
           if (m.resourceIncome) {
             for (const [resource, amount] of Object.entries(m.resourceIncome)) {
-              const res = resource as ResourceType;
-              income[res] = (income[res] || 0) + (amount || 0);
+              income[resource as ResourceType] = (income[resource as ResourceType] || 0) + (amount || 0);
             }
           }
         }
 
-        set((state) => ({
-          tribes: state.tribes.map((t) => {
+        set((s) => ({
+          tribes: s.tribes.map((t) => {
             if (t.id !== tribeId) return t;
             const newResources = { ...t.resources };
             for (const [resource, amount] of Object.entries(income)) {
-              const res = resource as ResourceType;
-              newResources[res] += amount || 0;
+              newResources[resource as ResourceType] += amount || 0;
             }
             return { ...t, resources: newResources };
           }),
           lastIncome: income,
         }));
-
         get().saveGame();
         return income;
       },
 
       rollDice: () => {
         const state = get();
-        const diceRoll = Math.floor(Math.random() * 6) + 1;
-        if (diceRoll <= 3) return null;
-        const randomIndex = Math.floor(Math.random() * state.events.length);
-        return state.events[randomIndex];
+        if (Math.floor(Math.random() * 6) + 1 <= 3) return null;
+        return state.events[Math.floor(Math.random() * state.events.length)];
       },
 
       applyEvent: (eventId) => {
         const state = get();
         const event = state.events.find((e) => e.id === eventId);
         if (!event) return;
-
-        const targetTribeId = state.currentTribeId;
-        const targetTribe = state.tribes.find((t) => t.id === targetTribeId);
+        const targetTribe = state.tribes.find((t) => t.id === state.currentTribeId);
         if (!targetTribe) return;
 
         const newResources = { ...targetTribe.resources };
         for (const [resource, amount] of Object.entries(event.effect)) {
-          const res = resource as ResourceType;
-          newResources[res] = Math.max(0, newResources[res] + (amount || 0));
+          newResources[resource as ResourceType] = Math.max(0, newResources[resource as ResourceType] + (amount || 0));
         }
 
         set({
-          tribes: state.tribes.map((t) =>
-            t.id === targetTribeId ? { ...t, resources: newResources } : t
-          ),
+          tribes: state.tribes.map((t) => t.id === state.currentTribeId ? { ...t, resources: newResources } : t),
           lastEvent: event,
         });
 
-        const effectStr = Object.entries(event.effect)
-          .map(([r, a]) => `${RESOURCE_NAMES[r as ResourceType]}${(a || 0) > 0 ? '+' : ''}${a}`)
-          .join(' ') || '—';
-        get().addLog('event', `${event.icon} ${event.name}: ${effectStr}`, targetTribeId);
-
+        const RESOURCE_NAMES: Record<string, string> = { fur: '🦊', ore: '⚒️', fabric: '🧵', food: '🍞', money: '💰' };
+        const effectStr = Object.entries(event.effect).map(([r, a]) => `${RESOURCE_NAMES[r]}${(a || 0) > 0 ? '+' : ''}${a}`).join(' ') || '—';
+        get().addLog('event', `${event.icon} ${event.name}: ${effectStr}`, state.currentTribeId);
         get().saveGame();
       },
 
@@ -419,52 +367,27 @@ export const useGameStore = create<GameStore>()(
         const toTribe = state.tribes.find((t) => t.id === toTribeId);
         if (!fromTribe || !toTribe) return false;
 
-        for (const [resource, amount] of Object.entries(given)) {
-          if (fromTribe.resources[resource as ResourceType] < (amount || 0)) return false;
-        }
-        for (const [resource, amount] of Object.entries(received)) {
-          if (toTribe.resources[resource as ResourceType] < (amount || 0)) return false;
-        }
+        for (const [r, a] of Object.entries(given)) if (fromTribe.resources[r as ResourceType] < (a || 0)) return false;
+        for (const [r, a] of Object.entries(received)) if (toTribe.resources[r as ResourceType] < (a || 0)) return false;
 
-        const newFromResources = { ...fromTribe.resources };
-        for (const [resource, amount] of Object.entries(given)) {
-          newFromResources[resource as ResourceType] -= amount || 0;
-        }
-        for (const [resource, amount] of Object.entries(received)) {
-          newFromResources[resource as ResourceType] += amount || 0;
-        }
-
-        const newToResources = { ...toTribe.resources };
-        for (const [resource, amount] of Object.entries(received)) {
-          newToResources[resource as ResourceType] -= amount || 0;
-        }
-        for (const [resource, amount] of Object.entries(given)) {
-          newToResources[resource as ResourceType] += amount || 0;
-        }
-
-        const newTrade: Trade = {
-          id: `trade_${Date.now()}`,
-          turn: state.turn,
-          fromTribeId,
-          toTribeId,
-          given,
-          received,
-        };
+        const newFrom = { ...fromTribe.resources };
+        const newTo = { ...toTribe.resources };
+        for (const [r, a] of Object.entries(given)) { newFrom[r as ResourceType] -= (a || 0); newTo[r as ResourceType] += (a || 0); }
+        for (const [r, a] of Object.entries(received)) { newTo[r as ResourceType] -= (a || 0); newFrom[r as ResourceType] += (a || 0); }
 
         set({
           tribes: state.tribes.map((t) => {
-            if (t.id === fromTribeId) return { ...t, resources: newFromResources };
-            if (t.id === toTribeId) return { ...t, resources: newToResources };
+            if (t.id === fromTribeId) return { ...t, resources: newFrom };
+            if (t.id === toTribeId) return { ...t, resources: newTo };
             return t;
           }),
-          trades: [...state.trades, newTrade],
+          trades: [...state.trades, { id: `trade_${Date.now()}`, turn: state.turn, fromTribeId, toTribeId, given, received }],
         });
 
-        const givenStr = Object.entries(given).map(([r, a]) => `${RESOURCE_NAMES[r as ResourceType]}${a}`).join(' ') || '—';
-        const receivedStr = Object.entries(received).map(([r, a]) => `${RESOURCE_NAMES[r as ResourceType]}${a}`).join(' ') || '—';
-        get().addLog('trade', `↔ ${toTribe.name}: отдал ${givenStr}, получил ${receivedStr}`, fromTribeId);
-        get().addLog('trade', `↔ ${fromTribe.name}: отдал ${receivedStr}, получил ${givenStr}`, toTribeId);
-
+        const RESOURCE_NAMES: Record<string, string> = { fur: '🦊', ore: '⚒️', fabric: '🧵', food: '🍞', money: '💰' };
+        const gStr = Object.entries(given).map(([r, a]) => `${RESOURCE_NAMES[r]}${a}`).join(' ');
+        const rStr = Object.entries(received).map(([r, a]) => `${RESOURCE_NAMES[r]}${a}`).join(' ');
+        get().addLog('trade', `↔ ${toTribe.name}: отдал ${gStr}, получил ${rStr}`, fromTribeId);
         get().saveGame();
         return true;
       },
@@ -472,60 +395,36 @@ export const useGameStore = create<GameStore>()(
       nextTurn: () => {
         const state = get();
         if (state.gameEnded) return;
-
-        if (state.turn >= MAX_TURNS) {
-          get().endGame();
-          return;
-        }
+        if (state.turn >= MAX_TURNS) { get().endGame(); return; }
 
         const tribeIds = state.tribes.map((t) => t.id);
-        const currentIndex = tribeIds.indexOf(state.currentTribeId);
-        const nextIndex = (currentIndex + 1) % tribeIds.length;
+        const nextIndex = (tribeIds.indexOf(state.currentTribeId) + 1) % tribeIds.length;
         const nextTribeId = tribeIds[nextIndex];
         const newTurn = nextTribeId === 't1' ? state.turn + 1 : state.turn;
 
         set({ turn: newTurn, currentTribeId: nextTribeId, capturesThisTurn: 0 });
-
-        const nextTribe = state.tribes.find((t) => t.id === nextTribeId);
-        get().addLog('turn_start', `Ход ${newTurn}: начинает ${nextTribe?.name}`, nextTribeId);
-
-        if (get().checkGameEnd()) {
-          get().endGame();
-        }
-
+        get().addLog('turn_start', `Ход ${newTurn}: начинает ${state.tribes.find(t => t.id === nextTribeId)?.name}`, nextTribeId);
+        if (get().checkGameEnd()) get().endGame();
         get().saveGame();
       },
 
       checkGameEnd: () => {
         const state = get();
         if (state.turn >= MAX_TURNS) return true;
-        const allSectorsCaptured = state.sectors.every((s) => s.ownerId !== null);
-        if (allSectorsCaptured) return true;
+        if (state.sectors.every((s) => s.ownerId !== null)) return true;
         return false;
       },
 
       endGame: () => {
         const state = get();
-        const winner = state.tribes.reduce((max, tribe) =>
-          tribe.score > max.score ? tribe : max
-        );
+        const winner = state.tribes.reduce((max, t) => t.score > max.score ? t : max);
         set({ gameEnded: true, winnerId: winner.id });
         get().saveGame();
       },
 
-      setCurrentTribe: (tribeId) => {
-        set({ currentTribeId: tribeId, capturesThisTurn: 0 });
-        get().saveGame();
-      },
-
+      setCurrentTribe: (tribeId) => { set({ currentTribeId: tribeId, capturesThisTurn: 0 }); get().saveGame(); },
       addResource: (tribeId, resource, amount) => {
-        set((state) => ({
-          tribes: state.tribes.map((t) =>
-            t.id === tribeId
-              ? { ...t, resources: { ...t.resources, [resource]: t.resources[resource] + amount } }
-              : t
-          ),
-        }));
+        set((s) => ({ tribes: s.tribes.map((t) => t.id === tribeId ? { ...t, resources: { ...t.resources, [resource]: t.resources[resource] + amount } } : t) }));
         get().saveGame();
       },
 
@@ -534,27 +433,18 @@ export const useGameStore = create<GameStore>()(
         const sector = state.sectors.find((s) => s.id === sectorId);
         if (!sector || sector.ownerId !== null) return false;
 
+        // Проверка связности через таблицу ADJACENCY
+        const validTargets = getCaptureTargets(state.sectors, state.tribes, state.currentTribeId);
+        if (!validTargets.has(sectorId)) return false;
+
         if (state.capturesThisTurn >= MAX_CAPTURES_PER_TURN) return false;
-
-        const freeCount = state.sectors.filter((s) => s.ownerId === null).length;
-        if (freeCount - 1 < MIN_FREE_SECTORS) return false;
-
-        const owned = state.sectors.filter((s) => s.ownerId === state.currentTribeId);
-        const adjacent = owned.some((o) => isAdjacentSector(o, sector));
-        if (!adjacent) return false;
+        if (state.sectors.filter((s) => s.ownerId === null).length - 1 < MIN_FREE_SECTORS) return false;
 
         set({
-          sectors: state.sectors.map((s) =>
-            s.id === sectorId ? { ...s, ownerId: state.currentTribeId } : s
-          ),
-          tribes: state.tribes.map((t) =>
-            t.id === state.currentTribeId
-              ? { ...t, sectors: [...t.sectors, sectorId] }
-              : t
-          ),
+          sectors: state.sectors.map((s) => s.id === sectorId ? { ...s, ownerId: state.currentTribeId } : s),
+          tribes: state.tribes.map((t) => t.id === state.currentTribeId ? { ...t, sectors: [...t.sectors, sectorId] } : t),
           capturesThisTurn: state.capturesThisTurn + 1,
         });
-
         get().addLog('capture', `⚔️ Захватил сектор #${sectorId} (${sector.type})`, state.currentTribeId);
         get().refreshMonopolies();
         get().saveGame();
@@ -566,9 +456,7 @@ export const useGameStore = create<GameStore>()(
         const tribe = state.tribes.find((t) => t.id === tribeId);
         const building = state.buildings.find((b) => b.id === buildingId);
         if (!tribe || !building) return false;
-        for (const [resource, amount] of Object.entries(building.cost)) {
-          if (tribe.resources[resource as ResourceType] < (amount || 0)) return false;
-        }
+        for (const [r, a] of Object.entries(building.cost)) if (tribe.resources[r as ResourceType] < (a || 0)) return false;
         return true;
       },
 
@@ -576,37 +464,20 @@ export const useGameStore = create<GameStore>()(
         const state = get();
         const sector = state.sectors.find((s) => s.id === sectorId);
         const building = state.buildings.find((b) => b.id === buildingId);
-        if (!sector || !building) return false;
-        if (sector.ownerId !== state.currentTribeId) return false;
-        if (sector.buildingId !== null) return false;
-
-        if (building.allowedBiomes && !building.allowedBiomes.includes(sector.type)) {
-          return false;
-        }
+        if (!sector || !building || sector.ownerId !== state.currentTribeId || sector.buildingId) return false;
+        if (building.allowedBiomes && !building.allowedBiomes.includes(sector.type)) return false;
 
         const tribe = state.tribes.find((t) => t.id === state.currentTribeId);
         if (!tribe) return false;
+        for (const [r, a] of Object.entries(building.cost)) if (tribe.resources[r as ResourceType] < (a || 0)) return false;
 
-        for (const [resource, amount] of Object.entries(building.cost)) {
-          if (tribe.resources[resource as ResourceType] < (amount || 0)) return false;
-        }
-
-        const newResources = { ...tribe.resources };
-        for (const [resource, amount] of Object.entries(building.cost)) {
-          newResources[resource as ResourceType] -= amount || 0;
-        }
+        const newRes = { ...tribe.resources };
+        for (const [r, a] of Object.entries(building.cost)) newRes[r as ResourceType] -= (a || 0);
 
         set({
-          sectors: state.sectors.map((s) =>
-            s.id === sectorId ? { ...s, buildingId: buildingId } : s
-          ),
-          tribes: state.tribes.map((t) =>
-            t.id === state.currentTribeId
-              ? { ...t, resources: newResources, buildings: [...t.buildings, buildingId], score: t.score + building.score }
-              : t
-          ),
+          sectors: state.sectors.map((s) => s.id === sectorId ? { ...s, buildingId } : s),
+          tribes: state.tribes.map((t) => t.id === state.currentTribeId ? { ...t, resources: newRes, buildings: [...t.buildings, buildingId], score: t.score + building.score } : t),
         });
-
         get().addLog('build', `🏗️ Построил ${building.icon} ${building.name} в секторе #${sectorId} (+${building.score} ОИ)`, state.currentTribeId);
         get().saveGame();
         return true;
@@ -614,7 +485,6 @@ export const useGameStore = create<GameStore>()(
 
       refreshMonopolies: () => {
         const state = get();
-        const sectors = state.sectors;
         const oldMonopolies = state.monopolies || [];
         const awarded = new Set(state.awardedMonopolyKeys || []);
         const records: Monopoly[] = oldMonopolies.map((m) => ({ ...m }));
@@ -623,88 +493,44 @@ export const useGameStore = create<GameStore>()(
         const logMessages: { tribeId: string; title: string; icon: string; score: number }[] = [];
 
         const ownerOfAll = (ids: number[]): string | null => {
-          if (ids.length === 0) return null;
-          const first = sectors.find((s) => s.id === ids[0]);
-          if (!first || first.ownerId === null) return null;
-          const owner = first.ownerId;
-          return ids.every((id) => sectors.find((s) => s.id === id)?.ownerId === owner)
-            ? owner
-            : null;
+          if (!ids.length) return null;
+          const first = state.sectors.find((s) => s.id === ids[0]);
+          if (!first || !first.ownerId) return null;
+          return ids.every((id) => state.sectors.find((s) => s.id === id)?.ownerId === first.ownerId) ? first.ownerId : null;
         };
 
         for (const rec of records) {
-          const ids = rec.kind === 'region'
-            ? REGION_SECTOR_IDS[rec.key]
-            : BIOME_SECTOR_IDS[rec.key as BiomeType];
+          const ids = rec.kind === 'region' ? REGION_SECTOR_IDS[rec.key] : BIOME_SECTOR_IDS[rec.key as BiomeType];
           rec.active = !!ids && ownerOfAll(ids) === rec.tribeId;
         }
 
-        const tryAward = (
-          kind: MonopolyKind,
-          key: string,
-          ids: number[],
-          title: string,
-          icon: string,
-          scoreBonus: number,
-          moneyIncome: number,
-          resourceIncome?: Partial<Record<ResourceType, number>>
-        ) => {
+        const tryAward = (kind: MonopolyKind, key: string, ids: number[], title: string, icon: string, scoreBonus: number, moneyIncome: number, resourceIncome?: Partial<Record<ResourceType, number>>) => {
           const monoKey = `${kind}:${key}`;
           if (awarded.has(monoKey)) return;
-
           const owner = ownerOfAll(ids);
           if (!owner) return;
-
-          const rec: Monopoly = {
-            id: `mono_${monoKey}_${Date.now()}`,
-            tribeId: owner,
-            kind,
-            key,
-            title,
-            icon,
-            scoreBonus,
-            moneyIncome,
-            resourceIncome,
-            awardedTurn: state.turn,
-            active: true,
-          };
-
-          records.push(rec);
+          records.push({ id: `mono_${monoKey}_${Date.now()}`, tribeId: owner, kind, key, title, icon, scoreBonus, moneyIncome, resourceIncome, awardedTurn: state.turn, active: true });
           awarded.add(monoKey);
           scoreByTribe[owner] = (scoreByTribe[owner] || 0) + scoreBonus;
           logMessages.push({ tribeId: owner, title, icon, score: scoreBonus });
-
-          const tribeName = state.tribes.find((t) => t.id === owner)?.name || owner;
-          messages.push(`🏆 ${tribeName}: монополия «${title}»! +${scoreBonus} ОИ`);
+          messages.push(`🏆 ${state.tribes.find(t => t.id === owner)?.name}: монополия «${title}»! +${scoreBonus} ОИ`);
         };
 
-        for (const def of REGION_DEFS) {
-          tryAward('region', def.key, def.sectors, def.title, def.icon, def.scoreBonus, def.moneyIncome);
-        }
-
+        for (const def of REGION_DEFS) tryAward('region', def.key, def.sectors, def.title, def.icon, def.scoreBonus, def.moneyIncome);
         for (const biome of Object.keys(BIOME_SECTOR_IDS) as BiomeType[]) {
           const def = BIOME_MONOPOLY_DEFS[biome];
           tryAward('biome', biome, BIOME_SECTOR_IDS[biome], def.title, def.icon, def.scoreBonus, def.moneyIncome, def.resourceIncome);
         }
 
-        const activeChanged =
-          records.length !== oldMonopolies.length ||
-          records.some((rec, idx) => rec.active !== oldMonopolies[idx]?.active);
-
-        if (messages.length > 0 || activeChanged) {
+        if (messages.length > 0 || records.some((r, i) => r.active !== oldMonopolies[i]?.active)) {
           set({
-            tribes: state.tribes.map((t) =>
-              scoreByTribe[t.id] ? { ...t, score: t.score + scoreByTribe[t.id] } : t
-            ),
+            tribes: state.tribes.map((t) => scoreByTribe[t.id] ? { ...t, score: t.score + scoreByTribe[t.id] } : t),
             monopolies: records,
             awardedMonopolyKeys: Array.from(awarded),
             ...(messages.length > 0 ? { bankToast: messages.join('\n') } : {}),
           });
         }
-
-        for (const m of logMessages) {
-          get().addLog('monopoly', `${m.icon} Монополия «${m.title}» (+${m.score} ОИ)`, m.tribeId);
-        }
+        for (const m of logMessages) get().addLog('monopoly', `${m.icon} Монополия «${m.title}» (+${m.score} ОИ)`, m.tribeId);
       },
 
       expandMap: () => {
@@ -712,7 +538,6 @@ export const useGameStore = create<GameStore>()(
         const level = state.expansionLevel;
         const baseX = 535 + level * 130;
         const startId = 28 + level * 8;
-
         const extra: Sector[] = [
           { id: startId, type: 'forest', ownerId: null, buildingId: null, x: baseX, y: 100 },
           { id: startId + 1, type: 'mountain', ownerId: null, buildingId: null, x: baseX + 44, y: 175 },
@@ -723,190 +548,204 @@ export const useGameStore = create<GameStore>()(
           { id: startId + 6, type: 'plain', ownerId: null, buildingId: null, x: baseX + 87, y: 425 },
           { id: startId + 7, type: 'forest', ownerId: null, buildingId: null, x: baseX + 44, y: 500 },
         ];
-
-        set({
-          sectors: [...state.sectors, ...extra],
-          expansionLevel: level + 1,
-        });
-
+        set({ sectors: [...state.sectors, ...extra], expansionLevel: level + 1 });
         get().addLog('capture', `🗺️ Учитель расширил карту до ${state.sectors.length + 8} тайлов`, null);
         get().refreshMonopolies();
         get().saveGame();
         return true;
       },
 
-      // ЭКСПОРТ В JSON ФАЙЛ
-      exportToJSON: () => {
+      // === РЫНОК ТЕРРИТОРИЙ ===
+      calculateSectorValue: (sectorId) => {
         const state = get();
-        const exportData = {
-          version: '1.0',
-          exportedAt: new Date().toISOString(),
-          turn: state.turn,
-          tribes: state.tribes,
-          sectors: state.sectors,
-          trades: state.trades,
-          loans: state.loans,
-          deposits: state.deposits,
-          shares: state.shares,
-          monopolies: state.monopolies,
-          awardedMonopolyKeys: state.awardedMonopolyKeys,
-          currentTribeId: state.currentTribeId,
-          gameEnded: state.gameEnded,
-          winnerId: state.winnerId,
-          capturesThisTurn: state.capturesThisTurn,
-          expansionLevel: state.expansionLevel,
-          logs: state.logs,
-        };
-
-        const jsonString = JSON.stringify(exportData, null, 2);
-        const blob = new Blob([jsonString], { type: 'application/json' });
-        const url = URL.createObjectURL(blob);
-
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `eco-empire-save-${new Date().toISOString().slice(0, 10)}.json`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
-
-        console.log('⬇️ Игра экспортирована в JSON файл');
+        const sector = state.sectors.find((s) => s.id === sectorId);
+        if (!sector) return 0;
+        const BIOME_VALUES: Record<BiomeType, number> = { forest: 5, mountain: 5, coast: 7, plain: 5, silk_road: 8 };
+        let value = BIOME_VALUES[sector.type];
+        if (sector.buildingId) {
+          const b = state.buildings.find((x) => x.id === sector.buildingId);
+          if (b) value += b.score * 2;
+        }
+        if (state.monopolies.some((m) => m.tribeId === sector.ownerId && m.active)) value += 3;
+        return Math.round(value);
       },
 
-      // ИМПОРТ ИЗ JSON ФАЙЛА
-      importFromJSON: (file: File): Promise<boolean> => {
-        return new Promise((resolve) => {
-          const reader = new FileReader();
+      listSectorForSale: (sectorId, price) => {
+        const state = get();
+        const sector = state.sectors.find((s) => s.id === sectorId);
+        if (!sector || sector.ownerId !== state.currentTribeId || price <= 0) return false;
+        if (state.sectorListings.some((l) => l.sectorId === sectorId && l.active)) return false;
 
-          reader.onload = (e) => {
-            try {
-              const data = JSON.parse(e.target?.result as string);
+        set({ sectorListings: [...state.sectorListings, { id: `listing_${Date.now()}`, sectorId, sellerId: state.currentTribeId, price, listedTurn: state.turn, active: true }] });
+        get().addLog('sector_sale', `🏷️ Выставил сектор #${sectorId} на продажу за 💰${price}`, state.currentTribeId);
+        get().saveGame();
+        return true;
+      },
 
-              // Валидация структуры
-              if (!data.turn || !data.tribes || !data.sectors) {
-                console.error('❌ Неверный формат файла');
-                resolve(false);
-                return;
-              }
+      cancelSectorListing: (listingId) => {
+        const state = get();
+        const listing = state.sectorListings.find((l) => l.id === listingId);
+        if (!listing || listing.sellerId !== state.currentTribeId) return false;
+        set({ sectorListings: state.sectorListings.map((l) => l.id === listingId ? { ...l, active: false } : l) });
+        get().addLog('sector_sale', `❌ Снял с продажи сектор #${listing.sectorId}`, state.currentTribeId);
+        get().saveGame();
+        return true;
+      },
 
-              set({
-                turn: data.turn,
-                tribes: data.tribes,
-                sectors: data.sectors,
-                trades: data.trades || [],
-                loans: data.loans || [],
-                deposits: data.deposits || [],
-                shares: data.shares || [],
-                monopolies: data.monopolies || [],
-                awardedMonopolyKeys: data.awardedMonopolyKeys || [],
-                currentTribeId: data.currentTribeId || 't1',
-                gameEnded: data.gameEnded || false,
-                winnerId: data.winnerId || null,
-                capturesThisTurn: data.capturesThisTurn || 0,
-                expansionLevel: data.expansionLevel || 0,
-                logs: data.logs || [],
-                lastSaved: Date.now(),
-              });
+      buySector: (listingId) => {
+        const state = get();
+        const listing = state.sectorListings.find((l) => l.id === listingId && l.active);
+        if (!listing) return false;
+        const buyer = state.tribes.find((t) => t.id === state.currentTribeId);
+        const seller = state.tribes.find((t) => t.id === listing.sellerId);
+        if (!buyer || !seller || buyer.resources.money < listing.price) return false;
 
-              get().refreshMonopolies();
-              get().saveGame(); // Сохраняем в localStorage после импорта
-              console.log('⬆️ Игра импортирована из JSON файла');
-              resolve(true);
-            } catch (error) {
-              console.error('❌ Ошибка парсинга JSON:', error);
-              resolve(false);
-            }
-          };
-
-          reader.onerror = () => {
-            console.error('❌ Ошибка чтения файла');
-            resolve(false);
-          };
-
-          reader.readAsText(file);
+        set({
+          tribes: state.tribes.map((t) => {
+            if (t.id === buyer.id) return { ...t, resources: { ...t.resources, money: t.resources.money - listing.price }, sectors: [...t.sectors, listing.sectorId] };
+            if (t.id === seller.id) return { ...t, resources: { ...t.resources, money: t.resources.money + listing.price }, sectors: t.sectors.filter((id) => id !== listing.sectorId) };
+            return t;
+          }),
+          sectors: state.sectors.map((s) => s.id === listing.sectorId ? { ...s, ownerId: buyer.id } : s),
+          sectorListings: state.sectorListings.map((l) => l.id === listingId ? { ...l, active: false } : l),
         });
+        get().addLog('sector_sale', `💰 Купил сектор #${listing.sectorId} у ${seller.name} за 💰${listing.price}`, buyer.id);
+        get().refreshMonopolies();
+        get().saveGame();
+        return true;
+      },
+
+      proposeSectorExchange: (sector1Id, sector2Id, additionalPayment) => {
+        const state = get();
+        const s1 = state.sectors.find((s) => s.id === sector1Id);
+        const s2 = state.sectors.find((s) => s.id === sector2Id);
+        if (!s1 || !s2 || s1.ownerId !== state.currentTribeId || !s2.ownerId) return null;
+
+        const exchange: SectorExchange = {
+          id: `exchange_${Date.now()}`, sector1Id, sector2Id,
+          owner1Id: s1.ownerId!, owner2Id: s2.ownerId,
+          additionalPayment, status: 'pending', createdTurn: state.turn,
+        };
+        set({ sectorExchanges: [...state.sectorExchanges, exchange] });
+        get().addLog('sector_exchange', `🔄 Предложил обмен: #${sector1Id} ↔ #${sector2Id}`, state.currentTribeId);
+        get().saveGame();
+        return exchange.id;
+      },
+
+      acceptSectorExchange: (exchangeId) => {
+        const state = get();
+        const ex = state.sectorExchanges.find((e) => e.id === exchangeId);
+        if (!ex || ex.status !== 'pending' || ex.owner2Id !== state.currentTribeId) return false;
+
+        if (ex.additionalPayment) {
+          const payer = state.tribes.find((t) => t.id === ex.additionalPayment!.fromId);
+          if (!payer || payer.resources.money < ex.additionalPayment.amount) return false;
+        }
+
+        set({
+          sectors: state.sectors.map((s) => {
+            if (s.id === ex.sector1Id) return { ...s, ownerId: ex.owner2Id };
+            if (s.id === ex.sector2Id) return { ...s, ownerId: ex.owner1Id };
+            return s;
+          }),
+          tribes: state.tribes.map((t) => {
+            if (t.id === ex.owner1Id) return { ...t, sectors: [...t.sectors.filter((id) => id !== ex.sector1Id), ex.sector2Id] };
+            if (t.id === ex.owner2Id) return { ...t, sectors: [...t.sectors.filter((id) => id !== ex.sector2Id), ex.sector1Id] };
+            return t;
+          }),
+          sectorExchanges: state.sectorExchanges.map((e) => e.id === exchangeId ? { ...e, status: 'accepted' } : e),
+        });
+
+        if (ex.additionalPayment) {
+          set((s) => ({
+            tribes: s.tribes.map((t) => {
+              if (t.id === ex.additionalPayment!.fromId) return { ...t, resources: { ...t.resources, money: t.resources.money - ex.additionalPayment!.amount } };
+              if (t.id === ex.additionalPayment!.toId) return { ...t, resources: { ...t.resources, money: t.resources.money + ex.additionalPayment!.amount } };
+              return t;
+            }),
+          }));
+        }
+        get().addLog('sector_exchange', `✅ Обмен: #${ex.sector1Id} ↔ #${ex.sector2Id}`, ex.owner1Id);
+        get().refreshMonopolies();
+        get().saveGame();
+        return true;
+      },
+
+      rejectSectorExchange: (exchangeId) => {
+        const state = get();
+        const ex = state.sectorExchanges.find((e) => e.id === exchangeId);
+        if (!ex || ex.status !== 'pending' || ex.owner2Id !== state.currentTribeId) return false;
+        set({ sectorExchanges: state.sectorExchanges.map((e) => e.id === exchangeId ? { ...e, status: 'rejected' } : e) });
+        get().addLog('sector_exchange', `❌ Отклонил обмен #${ex.sector1Id} ↔ #${ex.sector2Id}`, state.currentTribeId);
+        get().saveGame();
+        return true;
       },
 
       saveGame: () => {
         const state = get();
-        const saveData = {
-          turn: state.turn,
-          tribes: state.tribes,
-          sectors: state.sectors,
-          trades: state.trades,
-          loans: state.loans,
-          deposits: state.deposits,
-          shares: state.shares,
-          monopolies: state.monopolies,
-          awardedMonopolyKeys: state.awardedMonopolyKeys,
-          currentTribeId: state.currentTribeId,
-          gameEnded: state.gameEnded,
-          winnerId: state.winnerId,
-          capturesThisTurn: state.capturesThisTurn,
-          expansionLevel: state.expansionLevel,
-          logs: state.logs,
-          savedAt: new Date().toLocaleString('ru-RU'),
-        };
-        localStorage.setItem('eco-empire-save', JSON.stringify(saveData));
+        localStorage.setItem('eco-empire-save', JSON.stringify({
+          turn: state.turn, tribes: state.tribes, sectors: state.sectors, trades: state.trades,
+          loans: state.loans, deposits: state.deposits, shares: state.shares, monopolies: state.monopolies,
+          awardedMonopolyKeys: state.awardedMonopolyKeys, currentTribeId: state.currentTribeId,
+          gameEnded: state.gameEnded, winnerId: state.winnerId, capturesThisTurn: state.capturesThisTurn,
+          expansionLevel: state.expansionLevel, logs: state.logs, sectorListings: state.sectorListings,
+          sectorExchanges: state.sectorExchanges, savedAt: new Date().toLocaleString('ru-RU'),
+        }));
         set({ lastSaved: Date.now() });
       },
 
       loadGame: () => {
         const saved = localStorage.getItem('eco-empire-save');
-        if (!saved) {
-          console.log('❌ Сохранённая игра не найдена');
-          return false;
-        }
+        if (!saved) return false;
         try {
           const data = JSON.parse(saved);
           set({
-            turn: data.turn,
-            tribes: data.tribes,
-            sectors: data.sectors,
-            trades: data.trades || [],
-            loans: data.loans || [],
-            deposits: data.deposits || [],
-            shares: data.shares || [],
-            monopolies: data.monopolies || [],
-            awardedMonopolyKeys: data.awardedMonopolyKeys || [],
-            currentTribeId: data.currentTribeId,
-            gameEnded: data.gameEnded || false,
-            winnerId: data.winnerId || null,
-            capturesThisTurn: data.capturesThisTurn || 0,
-            expansionLevel: data.expansionLevel || 0,
-            logs: data.logs || [],
+            turn: data.turn, tribes: data.tribes, sectors: data.sectors, trades: data.trades || [],
+            loans: data.loans || [], deposits: data.deposits || [], shares: data.shares || [],
+            monopolies: data.monopolies || [], awardedMonopolyKeys: data.awardedMonopolyKeys || [],
+            currentTribeId: data.currentTribeId, gameEnded: data.gameEnded || false, winnerId: data.winnerId || null,
+            capturesThisTurn: data.capturesThisTurn || 0, expansionLevel: data.expansionLevel || 0,
+            logs: data.logs || [], sectorListings: data.sectorListings || [], sectorExchanges: data.sectorExchanges || [],
             lastSaved: Date.now(),
           });
           get().refreshMonopolies();
-          console.log('📂 Игра загружена из eco-empire-save');
           return true;
-        } catch (e) {
-          console.error('Ошибка загрузки:', e);
-          return false;
-        }
+        } catch { return false; }
       },
 
       resetGame: () => {
         set({
           ...initialGameState,
-          currentTribeId: 't1',
-          lastIncome: null,
-          gameEnded: false,
-          winnerId: null,
-          bankToast: null,
-          capturesThisTurn: 0,
-          expansionLevel: 0,
-          logs: [],
+          currentTribeId: 't1', lastIncome: null, gameEnded: false, winnerId: null,
+          bankToast: null, capturesThisTurn: 0, expansionLevel: 0, logs: [],
+          sectorListings: [], sectorExchanges: [],
         });
-        console.log('🔄 Игра сброшена полностью');
+      },
+
+      exportToJSON: () => {
+        const state = get();
+        const blob = new Blob([JSON.stringify({ version: '1.0', exportedAt: new Date().toISOString(), ...state }, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a'); a.href = url; a.download = `eco-empire-${new Date().toISOString().slice(0, 10)}.json`; a.click();
+        URL.revokeObjectURL(url);
+      },
+
+      importFromJSON: async (file) => {
+        try {
+          const text = await file.text();
+          const data = JSON.parse(text);
+          if (!data.tribes || !data.sectors) return false;
+          set({ ...data, lastSaved: Date.now() });
+          get().refreshMonopolies();
+          get().saveGame();
+          return true;
+        } catch { return false; }
       },
     }),
-    {
-      name: 'eco-empire-storage',
-    }
+    { name: 'eco-empire-storage' }
   )
 );
 
 if (typeof window !== 'undefined') {
-  (window as unknown as { useGameStore?: typeof useGameStore }).useGameStore = useGameStore;
+  (window as any).useGameStore = useGameStore;
 }
