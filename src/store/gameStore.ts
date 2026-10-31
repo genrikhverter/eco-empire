@@ -15,6 +15,11 @@ import type {
   SectorExchange,
 } from '../types';
 
+// Задания учителя храним как произвольные объекты, чтобы не зависеть от конкретной формы Assignment.
+// Если у тебя есть export type Assignment in ../types, можно заменить на:
+// type StoredAssignment = Assignment;
+type StoredAssignment = any;
+
 // === ТАБЛИЦА СВЯЗНОСТИ СЕКТОРОВ ===
 export const ADJACENCY: Record<number, number[]> = {
   // СИБИРЬ
@@ -33,7 +38,9 @@ export const ADJACENCY: Record<number, number[]> = {
 // 🎛️ РЕГУЛЯТОР: на сколько пикселей сдвинуть ВСЮ карту вниз.
 // Увеличь число — тайлы уйдут ниже заголовков. Уменьши — выше.
 export const MAP_Y_SHIFT = 50;
+// Снимок базовых связей ДО любых мутаций (expandMap / редактор) — для resetGame
 
+const BASE_ADJACENCY = JSON.parse(JSON.stringify(ADJACENCY)) as Record<number, number[]>;
 export const NEIGHBOR_MAX_DIST = 125;
 
 export const isAdjacentSector = (a: Sector, b: Sector): boolean => {
@@ -78,6 +85,20 @@ interface GameStore extends GameState {
   expansionLevel: number;
   mapExpanded: boolean;
   incomeCollectedThisTurn: boolean;
+  adjacencyVersion: number; // 🔄 растёт при изменении графа -> перерисовка линий
+
+
+  moveSector: (id: number, x: number, y: number) => void; // 🧪 PoC: drag-координаты
+  addEdge: (a: number, b: number) => boolean;    // 🔗 добавить связь
+  removeEdge: (a: number, b: number) => boolean; // ✂️ удалить связь
+  hasEdge: (a: number, b: number) => boolean;    // есть ли связь
+
+
+  teacherAssignments: StoredAssignment[];
+  setTeacherAssignments: (assignments: StoredAssignment[]) => void;
+  addTeacherAssignment: (assignment: StoredAssignment) => void;
+  updateTeacherAssignment: (id: string, patch: StoredAssignment) => void;
+  removeTeacherAssignment: (id: string) => void;
 
   nextTurn: () => void;
   setCurrentTribe: (tribeId: string) => void;
@@ -231,6 +252,8 @@ for (const s of initialGameState.sectors) {
   BIOME_SECTOR_IDS[s.type].push(s.id);
 }
 
+
+
 export const useGameStore = create<GameStore>()(
   persist(
     (set, get) => ({
@@ -245,6 +268,9 @@ export const useGameStore = create<GameStore>()(
       expansionLevel: 0,
       mapExpanded: false,
       incomeCollectedThisTurn: false,
+      adjacencyVersion: 0,
+      teacherAssignments: [],
+
 
       addLog: (action, details, tribeId = null) => {
         const state = get();
@@ -406,6 +432,74 @@ export const useGameStore = create<GameStore>()(
         set({ gameEnded: true, winnerId: winner.id });
         get().saveGame();
       },
+      moveSector: (id, x, y) => {
+        set((s) => ({
+          sectors: s.sectors.map((sec) =>
+            sec.id === id ? { ...sec, x: Math.round(x), y: Math.round(y) } : sec
+          ),
+        }));
+        get().saveGame();
+      },
+
+      hasEdge: (a, b) => {
+        const na = ADJACENCY[a];
+        return !!na && na.includes(b);
+      },
+
+      addEdge: (a, b) => {
+        if (a === b) return false;
+        const sa = get().sectors.find((s) => s.id === a);
+        const sb = get().sectors.find((s) => s.id === b);
+        if (!sa || !sb) return false;
+        if (!ADJACENCY[a]) (ADJACENCY as Record<number, number[]>)[a] = [];
+        if (!ADJACENCY[b]) (ADJACENCY as Record<number, number[]>)[b] = [];
+        if (ADJACENCY[a].includes(b)) return false;
+        ADJACENCY[a].push(b);
+        ADJACENCY[b].push(a);
+        set((s) => ({ adjacencyVersion: s.adjacencyVersion + 1 }));
+        get().saveGame();
+        return true;
+      },
+
+      removeEdge: (a, b) => {
+        const na = ADJACENCY[a];
+        if (!na || !na.includes(b)) return false;
+        (ADJACENCY as Record<number, number[]>)[a] = na.filter((x) => x !== b);
+        const nb = ADJACENCY[b];
+        if (nb) (ADJACENCY as Record<number, number[]>)[b] = nb.filter((x) => x !== a);
+        set((s) => ({ adjacencyVersion: s.adjacencyVersion + 1 }));
+        get().saveGame();
+        return true;
+      },
+
+      setTeacherAssignments: (assignments) => {
+        set({ teacherAssignments: Array.isArray(assignments) ? assignments : [] });
+        get().saveGame();
+      },
+
+      addTeacherAssignment: (assignment) => {
+        set((s) => ({
+          teacherAssignments: [...s.teacherAssignments, assignment],
+        }));
+        get().saveGame();
+      },
+
+      updateTeacherAssignment: (id, patch) => {
+        set((s) => ({
+          teacherAssignments: s.teacherAssignments.map((a) =>
+            a && a.id === id ? { ...a, ...patch } : a
+          ),
+        }));
+        get().saveGame();
+      },
+
+      removeTeacherAssignment: (id) => {
+        set((s) => ({
+          teacherAssignments: s.teacherAssignments.filter((a) => !a || a.id !== id),
+        }));
+        get().saveGame();
+      },
+
 
       setCurrentTribe: (tribeId) => { set({ currentTribeId: tribeId, capturesThisTurn: 0 }); get().saveGame(); },
       addResource: (tribeId, resource, amount) => {
@@ -696,52 +790,187 @@ export const useGameStore = create<GameStore>()(
 
       saveGame: () => {
         const state = get();
-        localStorage.setItem('eco-empire-save', JSON.stringify({
-          turn: state.turn, tribes: state.tribes, sectors: state.sectors, trades: state.trades,
-          loans: state.loans, deposits: state.deposits, shares: state.shares, monopolies: state.monopolies,
-          awardedMonopolyKeys: state.awardedMonopolyKeys, currentTribeId: state.currentTribeId,
-          gameEnded: state.gameEnded, winnerId: state.winnerId, capturesThisTurn: state.capturesThisTurn,
-          expansionLevel: state.expansionLevel, logs: state.logs, sectorListings: state.sectorListings,
-          sectorExchanges: state.sectorExchanges, incomeCollectedThisTurn: state.incomeCollectedThisTurn,
+
+        const savePayload = {
+          turn: state.turn,
+          tribes: state.tribes,
+          sectors: state.sectors,
+          trades: state.trades,
+          loans: state.loans,
+          deposits: state.deposits,
+          shares: state.shares,
+          monopolies: state.monopolies,
+          awardedMonopolyKeys: state.awardedMonopolyKeys,
+          currentTribeId: state.currentTribeId,
+          gameEnded: state.gameEnded,
+          winnerId: state.winnerId,
+          capturesThisTurn: state.capturesThisTurn,
+          expansionLevel: state.expansionLevel,
+          logs: state.logs,
+          sectorListings: state.sectorListings,
+          sectorExchanges: state.sectorExchanges,
+          incomeCollectedThisTurn: state.incomeCollectedThisTurn,
+
+          // 💾 Сохраняем граф связей: базовые соседи, мосты, связи созданные учителем
+          adjacency: JSON.parse(JSON.stringify(ADJACENCY)),
+
+          // 💾 Сохраняем задания, сделанные учителем
+          teacherAssignments: state.teacherAssignments || [],
+
           savedAt: new Date().toLocaleString('ru-RU'),
-        }));
+        };
+
+        localStorage.setItem('eco-empire-save', JSON.stringify(savePayload));
+
+        // Для совместимости со старыми версиями TeacherPanel, если он читает отдельный ключ
+        try {
+          localStorage.setItem(
+            'eco-empire-assignments',
+            JSON.stringify(state.teacherAssignments || [])
+          );
+        } catch {
+          // ignore
+        }
+
         set({ lastSaved: Date.now() });
       },
-
       loadGame: () => {
         const saved = localStorage.getItem('eco-empire-save');
         if (!saved) return false;
+
         try {
           const data = JSON.parse(saved);
+
+          // Загружаем задания учителя из основного сейва
+          let assignments: StoredAssignment[] = Array.isArray(data.teacherAssignments)
+            ? data.teacherAssignments
+            : [];
+
+          // Если в основном сейве заданий нет, пробуем мигрировать из старого отдельного ключа
+          if (assignments.length === 0) {
+            try {
+              const legacy = localStorage.getItem('eco-empire-assignments');
+              if (legacy) {
+                const parsedLegacy = JSON.parse(legacy);
+                if (Array.isArray(parsedLegacy)) {
+                  assignments = parsedLegacy;
+                }
+              }
+            } catch {
+              // ignore
+            }
+          }
+
           set({
-            turn: data.turn, tribes: data.tribes, sectors: data.sectors, trades: data.trades || [],
-            loans: data.loans || [], deposits: data.deposits || [], shares: data.shares || [],
-            monopolies: data.monopolies || [], awardedMonopolyKeys: data.awardedMonopolyKeys || [],
-            currentTribeId: data.currentTribeId, gameEnded: data.gameEnded || false, winnerId: data.winnerId || null,
-            capturesThisTurn: data.capturesThisTurn || 0, expansionLevel: data.expansionLevel || 0,
-            logs: data.logs || [], sectorListings: data.sectorListings || [], sectorExchanges: data.sectorExchanges || [],
+            turn: data.turn,
+            tribes: data.tribes,
+            sectors: data.sectors,
+            trades: data.trades || [],
+            loans: data.loans || [],
+            deposits: data.deposits || [],
+            shares: data.shares || [],
+            monopolies: data.monopolies || [],
+            awardedMonopolyKeys: data.awardedMonopolyKeys || [],
+            currentTribeId: data.currentTribeId,
+            gameEnded: data.gameEnded || false,
+            winnerId: data.winnerId || null,
+            capturesThisTurn: data.capturesThisTurn || 0,
+            expansionLevel: data.expansionLevel || 0,
+            logs: data.logs || [],
+            sectorListings: data.sectorListings || [],
+            sectorExchanges: data.sectorExchanges || [],
             incomeCollectedThisTurn: data.incomeCollectedThisTurn || false,
+            teacherAssignments: assignments,
             lastSaved: Date.now(),
           });
+
+          // Восстанавливаем граф связей
+          if (data.adjacency) {
+            for (const k of Object.keys(ADJACENCY)) {
+              delete (ADJACENCY as Record<number, number[]>)[Number(k)];
+            }
+
+            for (const [k, v] of Object.entries(data.adjacency as Record<number, number[]>)) {
+              (ADJACENCY as Record<number, number[]>)[Number(k)] = Array.isArray(v) ? [...v] : [];
+            }
+
+            set((s) => ({ adjacencyVersion: s.adjacencyVersion + 1 }));
+          } else {
+            // Старый сейв без adjacency — возвращаем базовые связи, чтобы не осталось мусора из памяти
+            for (const k of Object.keys(ADJACENCY)) {
+              delete (ADJACENCY as Record<number, number[]>)[Number(k)];
+            }
+
+            for (const [k, v] of Object.entries(BASE_ADJACENCY)) {
+              (ADJACENCY as Record<number, number[]>)[Number(k)] = [...v];
+            }
+
+            set((s) => ({ adjacencyVersion: s.adjacencyVersion + 1 }));
+          }
+
           get().refreshMonopolies();
           return true;
-        } catch { return false; }
+        } catch {
+          return false;
+        }
       },
 
       resetGame: () => {
+        const preservedAssignments = get().teacherAssignments || [];
+
         set({
           ...initialGameState,
-          currentTribeId: 't1', lastIncome: null, gameEnded: false, winnerId: null,
-          bankToast: null, capturesThisTurn: 0, expansionLevel: 0, logs: [],
-          sectorListings: [], sectorExchanges: [], incomeCollectedThisTurn: false,
+          currentTribeId: 't1',
+          lastIncome: null,
+          gameEnded: false,
+          winnerId: null,
+          bankToast: null,
+          capturesThisTurn: 0,
+          expansionLevel: 0,
+          logs: [],
+          sectorListings: [],
+          sectorExchanges: [],
+          incomeCollectedThisTurn: false,
+
+          // Задания учителя переживают сброс партии
+          teacherAssignments: preservedAssignments,
         });
+
+        // Сбрасываем граф связей к базовому эталону
+        for (const k of Object.keys(ADJACENCY)) {
+          delete (ADJACENCY as Record<number, number[]>)[Number(k)];
+        }
+
+        for (const [k, v] of Object.entries(BASE_ADJACENCY)) {
+          (ADJACENCY as Record<number, number[]>)[Number(k)] = [...v];
+        }
+
+        set((s) => ({ adjacencyVersion: s.adjacencyVersion + 1 }));
+
+        get().saveGame();
       },
 
       exportToJSON: () => {
         const state = get();
-        const blob = new Blob([JSON.stringify({ version: '1.0', exportedAt: new Date().toISOString(), ...state }, null, 2)], { type: 'application/json' });
+
+        const payload = {
+          version: '1.1',
+          exportedAt: new Date().toISOString(),
+          ...state,
+
+          // Явно добавляем граф связей, потому что ADJACENCY живёт вне state
+          adjacency: JSON.parse(JSON.stringify(ADJACENCY)),
+        };
+
+        const blob = new Blob([JSON.stringify(payload, null, 2)], {
+          type: 'application/json',
+        });
+
         const url = URL.createObjectURL(blob);
-        const a = document.createElement('a'); a.href = url; a.download = `eco-empire-${new Date().toISOString().slice(0, 10)}.json`; a.click();
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `eco-empire-${new Date().toISOString().slice(0, 10)}.json`;
+        a.click();
         URL.revokeObjectURL(url);
       },
 
@@ -749,13 +978,45 @@ export const useGameStore = create<GameStore>()(
         try {
           const text = await file.text();
           const data = JSON.parse(text);
+
           if (!data.tribes || !data.sectors) return false;
-          set({ ...data, lastSaved: Date.now() });
+
+          // Убираем adjacency из stateData, потому что это не поле стора, а внешний граф
+          const { adjacency, ...stateData } = data;
+
+          set({
+            ...stateData,
+            lastSaved: Date.now(),
+          });
+
+          // Восстанавливаем граф связей
+          if (adjacency) {
+            for (const k of Object.keys(ADJACENCY)) {
+              delete (ADJACENCY as Record<number, number[]>)[Number(k)];
+            }
+
+            for (const [k, v] of Object.entries(adjacency as Record<number, number[]>)) {
+              (ADJACENCY as Record<number, number[]>)[Number(k)] = Array.isArray(v) ? [...v] : [];
+            }
+
+            set((s) => ({ adjacencyVersion: s.adjacencyVersion + 1 }));
+          }
+
+          // Если в импорте есть задания учителя — они уже попадут в set через stateData.
+          // На всякий случай нормализуем:
+          if (Array.isArray(data.teacherAssignments)) {
+            set({ teacherAssignments: data.teacherAssignments });
+          }
+
           get().refreshMonopolies();
           get().saveGame();
           return true;
-        } catch { return false; }
+        } catch {
+          return false;
+        }
       },
+
+
     }),
     { name: 'eco-empire-storage' }
   )

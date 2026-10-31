@@ -1,27 +1,15 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
-import { useGameStore, getCaptureTargets, REGION_BG_COLORS, ADJACENCY, MAP_Y_SHIFT } from '../store/gameStore';
+import { Stage, Layer, Rect, Line, Text, Group } from 'react-konva';
+import {
+  useGameStore, getCaptureTargets, ADJACENCY, MAP_Y_SHIFT,
+} from '../store/gameStore';
 import { HexTile } from './HexTile';
 import { BuildMenu } from './BuildMenu';
 import { SectorSaleModal } from './SectorSaleModal';
 import { SectorExchangeModal } from './SectorExchangeModal';
 import { playClick, playCapture, playError } from '../utils/sounds';
 
-// 🎯 Верх фона = 20 + сдвиг. Это ГАРАНТИРУЕТ, что фон накрывает тайлы сверху
-// (верх тайла = 30 + сдвиг, фон на 10px выше — тайл внутри подложки).
-const REGION_TOP = 40 + MAP_Y_SHIFT;
-const REGION_HEIGHT = 480;
-// 🎛️ Насколько ВЫШЕ верха фона стоит плашка заголовка региона.
-// Больше число = название выше. 35 = текущее положение.
-// ⚠️ Если при большом значении заголовок обрезался сверху —
-//    увеличь MAP_Y_SHIFT в gameStore.ts (он тянет REGION_TOP вниз).
-const TITLE_LIFT = 55;   // ← было эквивалентно 35, теперь поднято на 20px
-
-
-const REGION_BOUNDS = {
-  siberia:   { x: 20,  y: REGION_TOP, w: 510, h: REGION_HEIGHT },
-  america:   { x: 520, y: REGION_TOP, w: 240, h: REGION_HEIGHT },
-  turkestan: { x: 800, y: REGION_TOP, w: 350, h: REGION_HEIGHT },
-};
+const WORLD_HEIGHT = 680;
 
 export const GameMap = () => {
   const sectors = useGameStore((state) => state.sectors);
@@ -31,6 +19,13 @@ export const GameMap = () => {
   const capturesThisTurn = useGameStore((state) => state.capturesThisTurn);
   const captureSector = useGameStore((state) => state.captureSector);
   const listings = useGameStore((state) => state.sectorListings);
+  const moveSector = useGameStore((state) => state.moveSector);
+  const addEdge = useGameStore((state) => state.addEdge);
+  const removeEdge = useGameStore((state) => state.removeEdge);
+  const hasEdge = useGameStore((state) => state.hasEdge);
+  const adjacencyVersion = useGameStore((state) => state.adjacencyVersion);
+
+  const [editable, setEditable] = useState(false);
 
   const [buildMenuSectorId, setBuildMenuSectorId] = useState<number | null>(null);
   const [saleModalSectorId, setSaleModalSectorId] = useState<number | null>(null);
@@ -46,54 +41,38 @@ export const GameMap = () => {
     [sectors, tribes, currentTribeId]
   );
 
-  const viewBoxWidth = useMemo(() => {
+  const worldWidth = useMemo(() => {
     if (sectors.length === 0) return 1200;
     const maxX = Math.max(...sectors.map((s) => s.x));
-    return Math.max(1200, maxX + 300);
+    return Math.max(1200, maxX + 160);
   }, [sectors]);
 
-  // Высота SVG растёт вместе со сдвигом, чтобы легенда/статистика не обрезались
-  const viewBoxHeight = 600 + MAP_Y_SHIFT;
-
-  const expandedBounds = useMemo(() => {
-    const expandedSectors = sectors.filter((s) => s.id >= 28);
-    if (expandedSectors.length === 0) return null;
-    const minX = Math.min(...expandedSectors.map((s) => s.x)) - 60;
-    const maxX = Math.max(...expandedSectors.map((s) => s.x)) + 60;
-    return { x: minX, y: REGION_TOP, w: maxX - minX, h: REGION_HEIGHT };
-  }, [sectors]);
-
+  // 🔗 ВСЕ рёбра графа ADJACENCY (зависит от adjacencyVersion -> мгновенная перерисовка)
   const bridgeLines = useMemo(() => {
     const lines: { key: string; x1: number; y1: number; x2: number; y2: number; fromId: number; toId: number }[] = [];
     for (const sector of sectors) {
       const neighbors = ADJACENCY[sector.id];
       if (!neighbors) continue;
       for (const neighborId of neighbors) {
-        if (neighborId <= sector.id) continue;
+        if (neighborId <= sector.id) continue; // ребро рисуем один раз
         const neighbor = sectors.find((s) => s.id === neighborId);
         if (!neighbor) continue;
-        const dist = Math.hypot(sector.x - neighbor.x, sector.y - neighbor.y);
-        if (dist <= 125) continue;
         lines.push({
-          key: `bridge-${sector.id}-${neighborId}`,
+          key: `edge-${sector.id}-${neighborId}`,
           x1: sector.x, y1: sector.y, x2: neighbor.x, y2: neighbor.y,
-          fromId: sector.id,
-          toId: neighborId,
+          fromId: sector.id, toId: neighborId,
         });
       }
     }
     return lines;
-  }, [sectors]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sectors, adjacencyVersion]);
 
-  const visibleBridges = useMemo(() => {
-    return bridgeLines.filter((line) => line.fromId >= 28 || line.toId >= 28);
-  }, [bridgeLines]);
-
-  const getBridgeColor = (fromId: number): string => {
-    if (fromId < 10) return '#22c55e';
-    if (fromId < 18) return '#3b82f6';
-    if (fromId < 28) return '#f59e0b';
-    return '#8b5cf6';
+  const getEdgeColor = (fromId: number): string => {
+    if (fromId < 10) return '#22c55e';   // Сибирь
+    if (fromId < 18) return '#3b82f6';   // Америка
+    if (fromId < 28) return '#f59e0b';   // Закавказье
+    return '#8b5cf6';                     // Новые земли
   };
 
   useEffect(() => {
@@ -101,6 +80,78 @@ export const GameMap = () => {
       if (justCapturedTimerRef.current !== null) window.clearTimeout(justCapturedTimerRef.current);
     };
   }, []);
+
+  // Общий парсер двух номеров тайлов из prompt-строки (используется и в связывании, и в разрыве)
+  const parseTwoIds = (raw: string): { ok: true; a: number; b: number } | { ok: false; msg: string } => {
+    const nums = raw.split(/[\s,;]+/).filter(Boolean).map(Number);
+    if (nums.length < 2) return { ok: false, msg: '⛔ Введите два номера тайлов, например: 3 10' };
+    const a = nums[0];
+    const b = nums[1];
+    if (!Number.isInteger(a) || !Number.isInteger(b) || a < 0 || b < 0)
+      return { ok: false, msg: '⛔ Номера должны быть целыми неотрицательными числами.' };
+    if (a === b) return { ok: false, msg: '⛔ Нельзя указать один и тот же тайл дважды.' };
+    const sa = sectors.find((s) => s.id === a);
+    const sb = sectors.find((s) => s.id === b);
+    if (!sa || !sb) {
+      const ids = sectors.map((s) => s.id).sort((x, y) => x - y).join(', ');
+      return { ok: false, msg: `⛔ Один из тайлов не найден.\nСуществующие id: ${ids}` };
+    }
+    return { ok: true, a, b };
+  };
+
+  // 🔗 Диалог СОЗДАНИЯ связи по двум номерам
+  const handleLinkEdges = () => {
+    playClick();
+    const raw = prompt(
+      '🔗 Укажите два номера тайлов через пробел или запятую, напр: 3 10\n\n' +
+      'Создаст связь #a ↔ #b (захват между ними станет возможен).'
+    );
+    if (raw === null) return; // отмена
+
+    const parsed = parseTwoIds(raw);
+    if (!parsed.ok) { playError(); alert(parsed.msg); return; }
+    const { a, b } = parsed;
+
+    if (hasEdge(a, b)) {
+      playError();
+      alert(`ℹ️ Связь #${a} ↔ #${b} уже существует.\nЧтобы удалить — нажмите «✂️ Разорвать».`);
+      return;
+    }
+    if (addEdge(a, b)) {
+      playCapture();
+      alert(`✅ Связь #${a} ↔ #${b} создана.`);
+    } else {
+      playError();
+      alert('⛔ Не удалось создать связь.');
+    }
+  };
+
+  // ✂️ Диалог УДАЛЕНИЯ связи по двум номерам (зеркальный алгоритм)
+  const handleUnlinkEdges = () => {
+    playClick();
+    const raw = prompt(
+      '✂️ Укажите два номера тайлов через пробел или запятую, напр: 3 10\n\n' +
+      'Удалит связь #a ↔ #b (захват между ними станет невозможен).'
+    );
+    if (raw === null) return; // отмена
+
+    const parsed = parseTwoIds(raw);
+    if (!parsed.ok) { playError(); alert(parsed.msg); return; }
+    const { a, b } = parsed;
+
+    if (!hasEdge(a, b)) {
+      playError();
+      alert(`⛔ Связи #${a} ↔ #${b} не существует — удалять нечего.`);
+      return;
+    }
+    if (removeEdge(a, b)) {
+      playClick();
+      alert(`✂️ Связь #${a} ↔ #${b} удалена.`);
+    } else {
+      playError();
+      alert('⛔ Не удалось удалить связь.');
+    }
+  };
 
   const handleSectorClick = (sectorId: number) => {
     const sector = sectors.find((s) => s.id === sectorId);
@@ -159,99 +210,117 @@ export const GameMap = () => {
   };
 
   return (
-    <div style={{ border: '2px solid #cbd5e1', borderRadius: '12px', background: '#f8fafc', marginBottom: '1rem', maxWidth: '100%', overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
-      <svg viewBox={`0 0 ${viewBoxWidth} ${viewBoxHeight}`} preserveAspectRatio="xMidYMid meet" style={{ display: 'block', width: '100%', height: 'auto', minWidth: '600px' }}>
+    <div style={{ position: 'relative', border: '2px solid #cbd5e1', borderRadius: '12px', background: '#f8fafc', marginBottom: '1rem', maxWidth: '100%', overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
 
-        {/* 1. ЗАГОЛОВКИ — плашка сидит ВЫШЕ верха тайлов (bounds.y-35), текст в ней */}
-        {Object.entries(REGION_BOUNDS).map(([key, bounds]) => (
-          <g key={`title-${key}`}>
-            <rect
-              x={bounds.x + bounds.w / 2 - 85}
-              y={bounds.y -  TITLE_LIFT}
-              width="200"
-              height="38"
-              rx="19"
-              fill="#ffffff"
-              stroke="#cbd5e1"
-              strokeWidth="2"
-              style={{ pointerEvents: 'none' }}
-            />
-            <text
-              x={5+bounds.x + bounds.w / 2}
-              y={bounds.y -  TITLE_LIFT+24}
-              textAnchor="middle"
-              fontSize="15"
-              fontWeight="bold"
-              fill="#0f172a"
-              style={{ pointerEvents: 'none', userSelect: 'none' }}
+      {/* Оверлей управления режимом раскладки (HTML поверх Stage) */}
+      <div style={{ position: 'absolute', top: 10, right: 10, zIndex: 10, display: 'flex', gap: '0.5rem', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+        {editable && (
+          <>
+            <button
+              onClick={handleLinkEdges}
+              style={{
+                padding: '0.5rem 0.9rem', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer',
+                border: '2px solid #0ea5e9', background: '#e0f2fe', color: '#075985', fontSize: '0.85rem',
+                boxShadow: '0 2px 6px rgba(0,0,0,0.08)',
+              }}
             >
-              {key === 'siberia' ? '🌲 СИБИРЬ' : key === 'america' ? '🌊 РУССКАЯ АМЕРИКА' : '🐫 ЗАКАВКАЗЬЕ'}
-            </text>
-          </g>
-        ))}
-
-        {/* 2. ФОНЫ РЕГИОНОВ — накрывают тайлы сверху и снизу */}
-        {Object.entries(REGION_BOUNDS).map(([key, bounds]) => (
-          <rect
-            key={`bg-${key}`}
-            x={bounds.x}
-            y={bounds.y}
-            width={bounds.w}
-            height={bounds.h}
-            rx="16"
-            ry="16"
-            fill={REGION_BG_COLORS[key]}
-            stroke="#cbd5e1"
-            strokeWidth="1"
-            strokeDasharray="6 3"
-            style={{ pointerEvents: 'none' }}
-          />
-        ))}
-
-        {/* 3. ФОН + ЗАГОЛОВОК НОВЫХ ЗЕМЕЛЬ */}
-        {expandedBounds && (
-          <g>
-            <rect x={expandedBounds.x + expandedBounds.w / 2 - 75} y={expandedBounds.y - 35} width="150" height="38" rx="19" fill="#ffffff" stroke="#cbd5e1" strokeWidth="2" style={{ pointerEvents: 'none' }} />
-            <text x={expandedBounds.x + expandedBounds.w / 2} y={expandedBounds.y - 10} textAnchor="middle" fontSize="15" fontWeight="bold" fill="#64748b" style={{ pointerEvents: 'none' }}>🗺️ НОВЫЕ ЗЕМЛИ</text>
-            <rect x={expandedBounds.x} y={expandedBounds.y} width={expandedBounds.w} height={expandedBounds.h} rx="16" ry="16" fill="#f1f5f9" stroke="#cbd5e1" strokeWidth="1" strokeDasharray="6 3" style={{ pointerEvents: 'none' }} />
-          </g>
+              🔗 Связать
+            </button>
+            <button
+              onClick={handleUnlinkEdges}
+              style={{
+                padding: '0.5rem 0.9rem', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer',
+                border: '2px solid #ef4444', background: '#fee2e2', color: '#991b1b', fontSize: '0.85rem',
+                boxShadow: '0 2px 6px rgba(0,0,0,0.08)',
+              }}
+            >
+              ✂️ Разорвать
+            </button>
+          </>
         )}
+        <button
+          onClick={() => { playClick(); setEditable((v) => !v); }}
+          style={{
+            padding: '0.5rem 0.9rem', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer',
+            border: '2px solid ' + (editable ? '#7c3aed' : '#cbd5e1'),
+            background: editable ? '#ede9fe' : 'white',
+            color: editable ? '#5b21b6' : '#334155', fontSize: '0.85rem',
+            boxShadow: '0 2px 6px rgba(0,0,0,0.08)',
+          }}
+        >
+          {editable ? '✏️ Раскладка: ВКЛ' : '🖐️ Раскладка: выкл'}
+        </button>
+      </div>
 
-        {/* 4. МОСТЫ */}
-        {visibleBridges.map((line) => (
-          <line
-            key={line.key}
-            x1={line.x1} y1={line.y1} x2={line.x2} y2={line.y2}
-            stroke={getBridgeColor(line.fromId)}
-            strokeWidth="3"
-            strokeDasharray="8 4"
-            opacity="0.7"
-            style={{ pointerEvents: 'none' }}
-          />
-        ))}
+      {/* Подсказка режима редактирования */}
+      {editable && (
+        <div style={{
+          position: 'absolute', top: 10, left: 10, zIndex: 10,
+          background: 'rgba(124,58,237,0.92)', color: 'white',
+          padding: '0.4rem 0.7rem', borderRadius: '8px', fontSize: '0.78rem', maxWidth: '340px',
+          boxShadow: '0 2px 6px rgba(0,0,0,0.15)', pointerEvents: 'none',
+        }}>
+          Тяни тайлы мышью/пальцем · «🔗 Связать» и «✂️ Разорвать» — введи два номера (#a #b).
+        </div>
+      )}
 
-        {/* 5. СТАТИСТИКА И ЛЕГЕНДА — сдвинуты вниз на MAP_Y_SHIFT */}
-        <text x="20" y={585 + MAP_Y_SHIFT} style={{ fontSize: '14px', fontWeight: 'bold', fill: '#1e293b' }}>🗺️ Карта Империи</text>
-        <text x="20" y={598 + MAP_Y_SHIFT} style={{ fontSize: '12px', fill: '#475569' }}>Захватов: {capturesThisTurn}/2 · Свободно: {freeCount} · Целей: {targets.size}</text>
+      <Stage width={worldWidth} height={WORLD_HEIGHT}>
 
-        <g transform={`translate(${viewBoxWidth - 220}, ${520 + MAP_Y_SHIFT})`}>
-          <rect x="0" y="0" width="210" height="75" rx="8" fill="white" stroke="#cbd5e1" strokeWidth="2" />
-          <text x="10" y="20" fontSize="13" fontWeight="bold" fill="#1e293b">🌉 Легенда связей:</text>
-          <line x1="10" y1="35" x2="40" y2="35" stroke="#22c55e" strokeWidth="4" strokeDasharray="8 4" />
-          <text x="50" y="39" fontSize="12" fill="#334155">🌲 Сибирь → Новые</text>
-          <line x1="10" y1="50" x2="40" y2="50" stroke="#3b82f6" strokeWidth="4" strokeDasharray="8 4" />
-          <text x="50" y="54" fontSize="12" fill="#334155">🌊 Америка → Новые</text>
-          <line x1="10" y1="65" x2="40" y2="65" stroke="#f59e0b" strokeWidth="4" strokeDasharray="8 4" />
-          <text x="50" y="69" fontSize="12" fill="#334155">🐫 Закавказье → Новые</text>
-        </g>
+        {/* СЛОЙ 1 — ВСЕ связи секторов (тянутся за тайлами при drag) */}
+        <Layer listening={false}>
+          {bridgeLines.map((line) => (
+            <Line
+              key={line.key}
+              points={[line.x1, line.y1, line.x2, line.y2]}
+              stroke={getEdgeColor(line.fromId)}
+              strokeWidth={2.5}
+              opacity={0.55}
+            />
+          ))}
+        </Layer>
 
-        {/* 6. ТАЙЛЫ — поверх фона */}
-        {sectors.map((sector) => {
-          const owner = tribes.find((t) => t.id === sector.ownerId);
-          const building = buildings.find((b) => b.id === sector.buildingId);
-          return <HexTile key={sector.id} sector={sector} tribe={owner} building={building} highlight={targets.has(sector.id)} justCaptured={justCapturedId === sector.id} onClick={() => handleSectorClick(sector.id)} />;
-        })}
-      </svg>
+        {/* СЛОЙ 2 — тайлы (поверх связей) */}
+        <Layer>
+          {sectors.map((sector) => {
+            const owner = tribes.find((t) => t.id === sector.ownerId);
+            const building = buildings.find((b) => b.id === sector.buildingId);
+            return (
+              <HexTile
+                key={sector.id}
+                sector={sector}
+                tribe={owner}
+                building={building}
+                highlight={targets.has(sector.id)}
+                justCaptured={justCapturedId === sector.id}
+                editable={editable}
+                onClick={handleSectorClick}
+                onMove={moveSector}
+              />
+            );
+          })}
+        </Layer>
+
+        {/* СЛОЙ 3 — футер: статистика + легенда цвета рёбер */}
+        <Layer listening={false}>
+          <Text x={20} y={585 + MAP_Y_SHIFT} fontSize={14} fontStyle="bold" fill="#1e293b" text="🗺️ Карта Империи" />
+          <Text x={20} y={600 + MAP_Y_SHIFT} fontSize={12} fill="#475569"
+            text={`Захватов: ${capturesThisTurn}/2 · Свободно: ${freeCount} · Целей: ${targets.size} · Рёбер: ${bridgeLines.length}`} />
+
+          <Group x={worldWidth - 220} y={520 + MAP_Y_SHIFT}>
+            <Rect width={210} height={88} cornerRadius={8} fill="white" stroke="#cbd5e1" strokeWidth={2} />
+            <Text x={10} y={8} fontSize={13} fontStyle="bold" fill="#1e293b" text="🔗 Цвет ребра = регион:" />
+            <Line points={[10, 32, 40, 32]} stroke="#22c55e" strokeWidth={4} />
+            <Text x={50} y={26} fontSize={12} fill="#334155" text="🌲 Сибирь" />
+            <Line points={[10, 47, 40, 47]} stroke="#3b82f6" strokeWidth={4} />
+            <Text x={50} y={41} fontSize={12} fill="#334155" text="🌊 Америка" />
+            <Line points={[10, 62, 40, 62]} stroke="#f59e0b" strokeWidth={4} />
+            <Text x={50} y={56} fontSize={12} fill="#334155" text="🐫 Закавказье" />
+            <Line points={[10, 77, 40, 77]} stroke="#8b5cf6" strokeWidth={4} />
+            <Text x={50} y={71} fontSize={12} fill="#334155" text="🗺️ Новые земли" />
+          </Group>
+        </Layer>
+      </Stage>
+
       {buildMenuSectorId !== null && <BuildMenu sectorId={buildMenuSectorId} onClose={() => setBuildMenuSectorId(null)} />}
       {saleModalSectorId !== null && <SectorSaleModal sectorId={saleModalSectorId} onClose={() => setSaleModalSectorId(null)} />}
       {exchangeModalSectorId !== null && <SectorExchangeModal mySectorId={exchangeModalSectorId} onClose={() => setExchangeModalSectorId(null)} />}

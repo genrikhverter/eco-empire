@@ -19,6 +19,9 @@ interface TeacherPanelProps {
   onClose: () => void;
 }
 
+// Тип задания с необязательным флагом «пользовательское»
+type PanelAssignment = Assignment & { isCustom?: boolean };
+
 const ACTION_LABELS: Record<LogAction, string> = {
   capture: '⚔️ Захват',
   build: '🏗️ Постройка',
@@ -44,10 +47,11 @@ export const TeacherPanel = ({ onClose }: TeacherPanelProps) => {
   const [filterAction, setFilterAction] = useState<LogAction | 'all'>('all');
   const [selectedAssignment, setSelectedAssignment] = useState<Assignment | null>(null);
   const [subjectFilter, setSubjectFilter] = useState<string>('all');
-  const [customAssignments, setCustomAssignments] = useState<Assignment[]>([]);
 
   const assignmentFileRef = useRef<HTMLInputElement>(null);
+  const gameFileRef = useRef<HTMLInputElement>(null);
 
+  // === Данные из стора ===
   const sectors = useGameStore((s) => s.sectors);
   const tribes = useGameStore((s) => s.tribes);
   const expansionLevel = useGameStore((s) => s.expansionLevel);
@@ -55,10 +59,34 @@ export const TeacherPanel = ({ onClose }: TeacherPanelProps) => {
   const expandMap = useGameStore((s) => s.expandMap);
   const resetGame = useGameStore((s) => s.resetGame);
 
+  // === Задания учителя живут в сторе (сохраняются вместе с тайлами и связями) ===
+  const teacherAssignmentsRaw = useGameStore((s) => s.teacherAssignments);
+  const setTeacherAssignments = useGameStore((s) => s.setTeacherAssignments);
+  const removeTeacherAssignment = useGameStore((s) => s.removeTeacherAssignment);
+
+  // === Единое сохранение игры (тайлы + связи + задания) ===
+  const saveGame = useGameStore((s) => s.saveGame);
+  const loadGame = useGameStore((s) => s.loadGame);
+  const exportToJSON = useGameStore((s) => s.exportToJSON);
+  const importFromJSON = useGameStore((s) => s.importFromJSON);
+
+  // Нормализуем к типу Assignment для рендера
+  const customAssignments = (teacherAssignmentsRaw || []) as Assignment[];
+
+  // 🔄 Миграция: если в сторе пусто, а в старом отдельном ключе есть — подхватываем.
+  // Работает один раз при монтировании (пустой deps), читаем через getState, чтобы не циклить.
   useEffect(() => {
-    setCustomAssignments(getCustomAssignments());
+    const inStore = useGameStore.getState().teacherAssignments;
+    if (!inStore || inStore.length === 0) {
+      const legacy = getCustomAssignments();
+      if (legacy && legacy.length > 0) {
+        setTeacherAssignments(legacy);
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // === Инструменты карты ===
   const handleExpand = () => {
     const ok = expandMap();
     if (ok) {
@@ -68,12 +96,48 @@ export const TeacherPanel = ({ onClose }: TeacherPanelProps) => {
   };
 
   const handleFullReset = () => {
-    if (confirm('🔄 Полный сброс партии?\n\nБудут сброшены:\n• все сектора и здания\n• ресурсы всех племён\n• банк, монополии, паи\n• журнал действий\n\nСохранённый снимок останется.')) {
+    if (confirm('🔄 Полный сброс партии?\n\nБудут сброшены:\n• все сектора, их позиции и связи\n• здания и ресурсы всех племён\n• банк, монополии, паи\n• журнал действий\n\n✅ ЗАДАНИЯ УЧИТЕЛЯ СОХРАНЯТСЯ.')) {
       resetGame();
-      alert('✅ Партия сброшена.');
+      alert('✅ Партия сброшена. Задания учителя остались.');
     }
   };
 
+  // === Единое сохранение игры ===
+  const handleSaveNow = () => {
+    saveGame();
+    alert('💾 Игра сохранена в один файл:\n• тайлы (позиции, владельцы, здания)\n• связи (граф ADJACENCY, включая мосты учителя)\n• задания учителя');
+  };
+
+  const handleLoadSaved = () => {
+    const ok = loadGame();
+    alert(ok ? '✅ Загружено сохранение: тайлы, связи и задания восстановлены.' : '⛈ Сохранение не найдено.');
+  };
+
+  const handleExportGame = () => {
+    exportToJSON();
+    alert('⬇️ Файл игры скачан (карта + связи + задания). Передай его другому учителю или на другой компьютер.');
+  };
+
+  const handleImportGame = () => {
+    gameFileRef.current?.click();
+  };
+
+  const handleGameFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.name.endsWith('.json')) {
+      alert('❌ Выберите JSON файл игры!');
+      e.target.value = '';
+      return;
+    }
+    const ok = await importFromJSON(file);
+    alert(ok
+      ? '✅ Игра загружена из файла: тайлы, связи и задания восстановлены.'
+      : '⛔ Не удалось загрузить файл (повреждён или не подходит).');
+    e.target.value = '';
+  };
+
+  // === Журнал ===
   const handleExportCSV = () => {
     const rows = [['Ход', 'Племя', 'Тип действия', 'Детали', 'Время']];
     for (const log of logs) {
@@ -96,12 +160,13 @@ export const TeacherPanel = ({ onClose }: TeacherPanelProps) => {
     URL.revokeObjectURL(url);
   };
 
+  // === Задания ===
   const handleStartAssignment = (assignment: Assignment) => {
     const confirmMsg = `📚 Запустить задание «${assignment.title}»?\n\n` +
       `📝 ${assignment.description.slice(0, 100)}...\n\n` +
       `⏱️ Время: ${assignment.duration}\n` +
       `🎯 Цель: ${assignment.objective}\n\n` +
-      `Игра будет сброшена и настроена под задание. Продолжить?`;
+      `Игра будет сброшена и настроена под задание (задания учителя останутся). Продолжить?`;
 
     if (!confirm(confirmMsg)) return;
 
@@ -136,8 +201,6 @@ export const TeacherPanel = ({ onClose }: TeacherPanelProps) => {
     localStorage.setItem('eco-empire-active-assignment', JSON.stringify(assignment));
 
     alert(`✅ Задание запущено!\n\n🎯 Цель: ${assignment.objective}\n⏱️ Время: ${assignment.duration}\n\nУдачи ученикам!`);
-
-    // Закрываем панель учителя после запуска задания
     onClose();
   };
 
@@ -155,18 +218,23 @@ export const TeacherPanel = ({ onClose }: TeacherPanelProps) => {
       return;
     }
 
+    // Валидация/парсинг — в assignmentImport (пишет и в старый ключ для совместимости)
     const result = await importAssignmentsFromFile(file, BUILTIN_ASSIGNMENTS);
     alert(result.message);
 
     if (result.success) {
-      setCustomAssignments(getCustomAssignments());
+      // Синхронизируем стор — теперь задания в едином сохранении игры
+      setTeacherAssignments(getCustomAssignments());
     }
 
     e.target.value = '';
   };
 
   const handleExportAssignments = () => {
-    const all = [...BUILTIN_ASSIGNMENTS, ...customAssignments];
+    const all: PanelAssignment[] = [
+      ...BUILTIN_ASSIGNMENTS,
+      ...customAssignments.map((a) => ({ ...a, isCustom: true })),
+    ];
     exportAllAssignments(all);
     alert(`⬇️ Экспортировано ${all.length} заданий в JSON файл`);
   };
@@ -187,10 +255,10 @@ export const TeacherPanel = ({ onClose }: TeacherPanelProps) => {
 
   const handleDeleteCustomAssignment = (assignmentId: string) => {
     if (!confirm('❌ Удалить это пользовательское задание?')) return;
-    if (deleteCustomAssignment(assignmentId)) {
-      setCustomAssignments(getCustomAssignments());
-      alert('✅ Задание удалено');
-    }
+    // Удаляем и из стора (источник истины сохранения игры), и из старого ключа
+    removeTeacherAssignment(assignmentId);
+    deleteCustomAssignment(assignmentId);
+    alert('✅ Задание удалено');
   };
 
   const filteredLogs = logs.filter((log) => {
@@ -219,7 +287,7 @@ export const TeacherPanel = ({ onClose }: TeacherPanelProps) => {
     };
   });
 
-  const allAssignments = [
+  const allAssignments: PanelAssignment[] = [
     ...BUILTIN_ASSIGNMENTS,
     ...customAssignments.map((a) => ({ ...a, isCustom: true })),
   ];
@@ -300,7 +368,7 @@ export const TeacherPanel = ({ onClose }: TeacherPanelProps) => {
                 🗺️ Текущее состояние карты
               </div>
               <div style={{ fontSize: '0.85rem', color: '#64748b' }}>
-                Тайлов: <strong>{sectors.length}</strong> | Уровень расширения: <strong>{expansionLevel}</strong>
+                Тайлов: <strong>{sectors.length}</strong> | Уровень расширения: <strong>{expansionLevel}</strong> | Заданий учителя: <strong>{customAssignments.length}</strong>
               </div>
             </div>
 
@@ -325,6 +393,29 @@ export const TeacherPanel = ({ onClose }: TeacherPanelProps) => {
                 </button>
               </div>
 
+              {/* 💾 Единое сохранение игры */}
+              <div style={{
+                border: '2px solid #10b981', borderRadius: '8px',
+                padding: '1rem', background: '#ecfdf5'
+              }}>
+                <h3 style={{ margin: '0 0 0.3rem 0', fontSize: '1rem', color: '#065f46' }}>
+                  💾 Единое сохранение игры
+                </h3>
+                <div style={{ fontSize: '0.8rem', color: '#047857', marginBottom: '0.7rem', lineHeight: 1.4 }}>
+                  Один файл/слот хранит всё: <strong>тайлы</strong> (позиции, владельцы, здания), <strong>связи</strong> (граф, включая мосты учителя) и <strong>задания учителя</strong>.
+                </div>
+                <div style={{
+                  display: 'grid',
+                  gridTemplateColumns: isMobile ? '1fr 1fr' : '1fr 1fr',
+                  gap: '0.5rem'
+                }}>
+                  <button onClick={handleSaveNow} style={greenBtn}>💾 Сохранить сейчас</button>
+                  <button onClick={handleLoadSaved} style={blueBtn}>📂 Загрузить</button>
+                  <button onClick={handleExportGame} style={purpleBtn}>⬇️ Экспорт JSON</button>
+                  <button onClick={handleImportGame} style={pinkBtn}>⬆️ Импорт JSON</button>
+                </div>
+              </div>
+
               <div style={{
                 border: '2px solid #f87171', borderRadius: '8px',
                 padding: '1rem', background: '#fef2f2'
@@ -341,14 +432,14 @@ export const TeacherPanel = ({ onClose }: TeacherPanelProps) => {
                     fontSize: '0.95rem', fontWeight: 'bold', cursor: 'pointer', minHeight: '48px'
                   }}
                 >
-                  🔄 Сбросить партию
+                  🔄 Сбросить партию (задания останутся)
                 </button>
               </div>
             </div>
           </>
         )}
 
-        {/* === ВКЛАДКА: ЗАДАНИЯ - СПИСОК (когда ничего не выбрано) === */}
+        {/* === ВКЛАДКА: ЗАДАНИЯ - СПИСОК === */}
         {tab === 'assignments' && selectedAssignment === null && (
           <>
             <div style={{
@@ -356,7 +447,7 @@ export const TeacherPanel = ({ onClose }: TeacherPanelProps) => {
               borderRadius: '8px', padding: '0.8rem', marginBottom: '1rem',
               fontSize: '0.85rem', color: '#713f12'
             }}>
-              <strong>📚 Библиотека заданий:</strong> {BUILTIN_ASSIGNMENTS.length} встроенных + {customAssignments.length} пользовательских
+              <strong>📚 Библиотека заданий:</strong> {BUILTIN_ASSIGNMENTS.length} встроенных + {customAssignments.length} пользовательских (хранятся в едином сейве игры)
             </div>
 
             <div style={{
@@ -438,7 +529,7 @@ export const TeacherPanel = ({ onClose }: TeacherPanelProps) => {
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.7rem' }}>
               {filteredAssignments.map((assignment) => {
-                const isCustom = 'isCustom' in assignment && Boolean(assignment.isCustom);
+                const isCustom = Boolean(assignment.isCustom);
                 return (
                   <div
                     key={assignment.id}
@@ -530,7 +621,7 @@ export const TeacherPanel = ({ onClose }: TeacherPanelProps) => {
           </>
         )}
 
-        {/* === ВКЛАДКА: ЗАДАНИЯ - ДЕТАЛИ (когда выбрано задание) === */}
+        {/* === ВКЛАДКА: ЗАДАНИЯ - ДЕТАЛИ === */}
         {tab === 'assignments' && selectedAssignment !== null && (
           <>
             <button
@@ -938,6 +1029,7 @@ export const TeacherPanel = ({ onClose }: TeacherPanelProps) => {
           </>
         )}
 
+        {/* Скрытые file-input: импорт заданий и импорт всей игры */}
         <input
           ref={assignmentFileRef}
           type="file"
@@ -945,7 +1037,36 @@ export const TeacherPanel = ({ onClose }: TeacherPanelProps) => {
           onChange={handleAssignmentFileChange}
           style={{ display: 'none' }}
         />
+        <input
+          ref={gameFileRef}
+          type="file"
+          accept=".json"
+          onChange={handleGameFileChange}
+          style={{ display: 'none' }}
+        />
       </div>
     </div>
   );
+};
+
+// === Стили кнопок единого сохранения ===
+const greenBtn: React.CSSProperties = {
+  padding: '0.7rem', background: 'linear-gradient(135deg, #10b981, #059669)',
+  color: 'white', border: 'none', borderRadius: '8px',
+  fontSize: '0.9rem', fontWeight: 'bold', cursor: 'pointer', minHeight: '46px'
+};
+const blueBtn: React.CSSProperties = {
+  padding: '0.7rem', background: 'linear-gradient(135deg, #3b82f6, #1d4ed8)',
+  color: 'white', border: 'none', borderRadius: '8px',
+  fontSize: '0.9rem', fontWeight: 'bold', cursor: 'pointer', minHeight: '46px'
+};
+const purpleBtn: React.CSSProperties = {
+  padding: '0.7rem', background: 'linear-gradient(135deg, #8b5cf6, #7c3aed)',
+  color: 'white', border: 'none', borderRadius: '8px',
+  fontSize: '0.9rem', fontWeight: 'bold', cursor: 'pointer', minHeight: '46px'
+};
+const pinkBtn: React.CSSProperties = {
+  padding: '0.7rem', background: 'linear-gradient(135deg, #ec4899, #db2777)',
+  color: 'white', border: 'none', borderRadius: '8px',
+  fontSize: '0.9rem', fontWeight: 'bold', cursor: 'pointer', minHeight: '46px'
 };

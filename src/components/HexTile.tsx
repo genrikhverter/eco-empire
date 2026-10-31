@@ -1,23 +1,25 @@
-import type { Sector, Tribe, Building } from '../types';
+import { memo } from 'react';
+import { Group, RegularPolygon, Text } from 'react-konva';
 
-interface HexTileProps {
-  sector: Sector;
-  tribe?: Tribe;
-  building?: Building;
-  highlight?: boolean;
-  justCaptured?: boolean;
-  onClick: () => void;
-}
+import type { KonvaEventObject } from 'konva/lib/Node';
+import type { Sector, Tribe, Building, BiomeType } from '../types';
 
-const BIOME_COLORS: Record<string, string> = {
-  forest: '#22c55e',
-  mountain: '#78716c',
-  coast: '#0ea5e9',
-  plain: '#eab308',
-  silk_road: '#ff8c00',
+// 🎛️ Геометрия гексагона. RADIUS = расстояние центр→вершина (как в SVG-версии ~50).
+// Если ориентация не совпадёт с оригиналом — подбери HEX_ROTATION (0 / 30 / 60).
+const RADIUS = 50;
+const HEX_ROTATION = 0; // degrees; 0 = Konva default, 30 = flat-top, 60 = pointy-top
+
+// Заливка ничейных тайлов по биому (совпадает со скриншотами)
+const BIOME_FILL: Record<BiomeType, string> = {
+  forest: '#4ade80',
+  mountain: '#9ca3af',
+  coast: '#60a5fa',
+  plain: '#fbbf24',
+  silk_road: '#fb923c',
 };
 
-const BIOME_ICONS: Record<string, string> = {
+// Иконка биома (эмодзи рендерится через canvas fillText — цветной в современных браузерах)
+const BIOME_EMOJI: Record<BiomeType, string> = {
   forest: '🌲',
   mountain: '⛰️',
   coast: '🌊',
@@ -25,185 +27,92 @@ const BIOME_ICONS: Record<string, string> = {
   silk_road: '🐫',
 };
 
-const getHexPoints = (cx: number, cy: number, size: number): string => {
-  const points = [];
-  for (let i = 0; i < 6; i++) {
-    const angleDeg = 60 * i - 30;
-    const angleRad = (Math.PI / 180) * angleDeg;
-    const x = cx + size * Math.cos(angleRad);
-    const y = cy + size * Math.sin(angleRad);
-    points.push(`${x},${y}`);
-  }
-  return points.join(' ');
-};
+interface HexTileProps {
+  sector: Sector;
+  tribe: Tribe | undefined;
+  building: Building | undefined;
+  highlight: boolean;
+  justCaptured: boolean;
+  editable: boolean;
+  onClick: (sectorId: number) => void;
+  onMove: (sectorId: number, x: number, y: number) => void;
+}
 
-export const HexTile = ({ sector, tribe, building, highlight, justCaptured, onClick }: HexTileProps) => {
-  const size = 50;
-  const fillColor = tribe ? tribe.color : BIOME_COLORS[sector.type];
-  const points = getHexPoints(sector.x, sector.y, size);
+export const HexTile = memo(({
+  sector, tribe, building, highlight, justCaptured, editable, onClick, onMove,
+}: HexTileProps) => {
+  // Цвет: владелец → цвет племени, иначе → цвет биома
+  const fill = tribe ? tribe.color : BIOME_FILL[sector.type];
+  const emoji = building ? building.icon : BIOME_EMOJI[sector.type];
 
-  const innerSize = size - 8;
-  const innerPoints = getHexPoints(sector.x, sector.y, innerSize);
-
-  const strokeColor = tribe ? tribe.color : '#ffffff';
-  const strokeWidth = tribe ? 8 : 5;
-
-  const glowSize = size + 6;
-  const glowPoints = getHexPoints(sector.x, sector.y, glowSize);
-
-  const pulseSize = size + 18;
-  const pulsePoints = getHexPoints(sector.x, sector.y, pulseSize);
-
-  // Диагностика: логируем запуск пульсации
-  if (justCaptured) {
-    console.log(`✨ ПУЛЬСАЦИЯ: сектор #${sector.id}, племя: ${tribe?.name}, цвет: ${tribe?.color}`);
-  }
+  const handleDragEnd = (e: KonvaEventObject<DragEvent>) => {
+    const node = e.target;
+    onMove(sector.id, node.x(), node.y());
+  };
 
   return (
-    <g
-      onClick={onClick}
-      style={{ cursor: 'pointer' }}
+    <Group
+      x={sector.x}
+      y={sector.y}
+      draggable={editable}
+      onClick={() => onClick(sector.id)}
+      onTap={() => onClick(sector.id)}
+      onDragEnd={handleDragEnd}
+      // при перетаскивании поднимаем тайл поверх соседей внутри своего слоя
+      onDragStart={(e) => e.target.moveToTop()}
     >
-      {/* CSS-анимация пульсации через <style> */}
-      {justCaptured && tribe && (
-        <>
-          <style>{`
-            @keyframes pulseRing-${sector.id} {
-              0%   { stroke-width: 4; opacity: 0.9; }
-              50%  { stroke-width: 14; opacity: 0.4; }
-              100% { stroke-width: 4; opacity: 0.9; }
-            }
-            @keyframes pulseFlash-${sector.id} {
-              0%   { opacity: 0; }
-              50%  { opacity: 0.7; }
-              100% { opacity: 0; }
-            }
-          `}</style>
-          {/* Внешнее пульсирующее кольцо */}
-          <polygon
-            points={pulsePoints}
-            fill="none"
-            stroke={tribe.color}
-            strokeWidth="4"
-            style={{
-              pointerEvents: 'none',
-              animation: `pulseRing-${sector.id} 0.8s ease-in-out 3`
-            }}
-          />
-          {/* Внутренняя вспышка */}
-          <polygon
-            points={points}
-            fill={tribe.color}
-            style={{
-              pointerEvents: 'none',
-              animation: `pulseFlash-${sector.id} 0.8s ease-in-out 3`
-            }}
-          />
-        </>
+      {/* Подсветка доступной цели захвата — жёлтый пунктирный контур снаружи */}
+      {highlight && (
+        <RegularPolygon
+          sides={6}
+          radius={RADIUS + 5}
+          rotation={HEX_ROTATION}
+          stroke="#facc15"
+          strokeWidth={3}
+          dash={[9, 6]}
+          fill="transparent"
+          listening={false}
+        />
       )}
 
-      {/* Подсветка доступной цели захвата */}
-      {highlight && !justCaptured && (
-        <polygon
-          points={glowPoints}
-          fill="none"
-          stroke="#fde047"
-          strokeWidth="4"
-          strokeDasharray="8 5"
-          strokeLinecap="round"
-          style={{ pointerEvents: 'none' }}
-        >
-          <animate
-            attributeName="stroke-dashoffset"
-            from="0"
-            to="-26"
-            dur="1s"
-            repeatCount="indefinite"
-          />
-        </polygon>
-      )}
-
-      {/* Тень */}
-      <polygon
-        points={points}
-        fill="rgba(0,0,0,0.2)"
-        transform="translate(3, 3)"
-        style={{ pointerEvents: 'none' }}
+      {/* Основной гексагон */}
+      <RegularPolygon
+        sides={6}
+        radius={RADIUS}
+        rotation={HEX_ROTATION}
+        fill={fill}
+        stroke="#ffffff"
+        strokeWidth={3}
+        shadowColor={justCaptured ? (tribe?.color ?? '#facc15') : 'transparent'}
+        shadowBlur={justCaptured ? 24 : 0}
+        shadowEnabled={justCaptured}
       />
 
-      {/* Основной шестиугольник */}
-      <polygon
-        points={points}
-        fill={fillColor}
-        stroke={strokeColor}
-        strokeWidth={strokeWidth}
-        opacity="0.9"
+      {/* Иконка биома / здания */}
+      <Text
+        text={emoji}
+        fontSize={26}
+        width={80}
+        align="center"
+        x={-40}
+        y={-22}
+        listening={false}
       />
 
-      {/* Внутренняя рамка */}
-      <polygon
-        points={innerPoints}
-        fill="none"
-        stroke="rgba(255,255,255,0.5)"
-        strokeWidth="2"
-        style={{ pointerEvents: 'none' }}
+      {/* Номер сектора */}
+      <Text
+        text={`#${sector.id}`}
+        fontSize={12}
+        fontStyle="bold"
+        fill="#ffffff"
+        width={80}
+        align="center"
+        x={-40}
+        y={22}
+        listening={false}
       />
-
-      {/* Значок меча */}
-      {highlight && !justCaptured && (
-        <text
-          x={sector.x + 30}
-          y={sector.y - 30}
-          textAnchor="middle"
-          dominantBaseline="middle"
-          style={{ fontSize: '16px', pointerEvents: 'none' }}
-        >
-          ⚔️
-        </text>
-      )}
-
-      {/* Иконка биома */}
-      {!building && (
-        <text
-          x={sector.x}
-          y={sector.y - 5}
-          textAnchor="middle"
-          dominantBaseline="middle"
-          style={{ fontSize: '24px', pointerEvents: 'none' }}
-        >
-          {BIOME_ICONS[sector.type]}
-        </text>
-      )}
-
-      {/* Иконка здания */}
-      {building && (
-        <text
-          x={sector.x}
-          y={sector.y - 5}
-          textAnchor="middle"
-          dominantBaseline="middle"
-          style={{ fontSize: '28px', pointerEvents: 'none' }}
-        >
-          {building.icon}
-        </text>
-      )}
-
-      {/* Номер */}
-      <text
-        x={sector.x}
-        y={sector.y + 22}
-        textAnchor="middle"
-        dominantBaseline="middle"
-        style={{
-          fontSize: '11px',
-          fill: 'white',
-          fontWeight: 'bold',
-          pointerEvents: 'none',
-          textShadow: '1px 1px 2px black'
-        }}
-      >
-        #{sector.id}
-      </text>
-    </g>
+    </Group>
   );
-};
+});
+
+HexTile.displayName = 'HexTile';
