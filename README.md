@@ -49,7 +49,7 @@
 
 ```bash
 # Клонируйте репозиторий
-git clone https://github.com/YOUR_USERNAME/eco-empire.git
+git clone https://github.com/genrikhverter/eco-empire.git
 cd eco-empire
 
 # Установите зависимости
