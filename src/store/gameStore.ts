@@ -18,37 +18,21 @@ import type {
 // === ТАБЛИЦА СВЯЗНОСТИ СЕКТОРОВ ===
 export const ADJACENCY: Record<number, number[]> = {
   // СИБИРЬ
-  0: [1, 4],
-  1: [0, 2, 4, 5],
-  2: [1, 3, 5, 6],
-  3: [2, 6, 7, 10],
-  4: [0, 1, 5, 8],
-  5: [1, 2, 4, 6, 8, 9],
-  6: [2, 3, 5, 7, 9],
-  7: [3, 6, 9, 12],
-  8: [4, 5, 9],
-  9: [5, 6, 7, 8, 14],
+  0: [1, 4], 1: [0, 2, 4, 5], 2: [1, 3, 5, 6], 3: [2, 6, 7, 10],
+  4: [0, 1, 5, 8], 5: [1, 2, 4, 6, 8, 9], 6: [2, 3, 5, 7, 9],
+  7: [3, 6, 9, 12], 8: [4, 5, 9], 9: [5, 6, 7, 8, 14],
   // РУССКАЯ АМЕРИКА
-  10: [3, 11, 12],
-  11: [10, 13, 18],
-  12: [7, 10, 13, 14],
-  13: [11, 12, 14, 15, 21],
-  14: [9, 12, 15, 16],
-  15: [13, 14, 16, 17, 24],
-  16: [14, 15, 17],
-  17: [15, 16, 26],
+  10: [3, 11, 12], 11: [10, 13, 18], 12: [7, 10, 13, 14], 13: [11, 12, 14, 15, 21],
+  14: [9, 12, 15, 16], 15: [13, 14, 16, 17, 24], 16: [14, 15, 17], 17: [15, 16, 26],
   // ЗАКАВКАЗЬЕ И ТУРКЕСТАН
-  18: [11, 19, 21],
-  19: [18, 20, 21, 22],
-  20: [19, 23],
-  21: [13, 18, 19, 22, 24],
-  22: [19, 21, 23, 24, 25],
-  23: [20, 22, 25, 26],
-  24: [15, 21, 22, 25, 27],
-  25: [22, 23, 24, 26, 27],
-  26: [17, 23, 25, 27],
-  27: [24, 25, 26],
+  18: [11, 19, 21], 19: [18, 20, 21, 22], 20: [19, 23], 21: [13, 18, 19, 22, 24],
+  22: [19, 21, 23, 24, 25], 23: [20, 22, 25, 26], 24: [15, 21, 22, 25, 27],
+  25: [22, 23, 24, 26, 27], 26: [17, 23, 25, 27], 27: [24, 25, 26],
 };
+
+// 🎛️ РЕГУЛЯТОР: на сколько пикселей сдвинуть ВСЮ карту вниз.
+// Увеличь число — тайлы уйдут ниже заголовков. Уменьши — выше.
+export const MAP_Y_SHIFT = 50;
 
 export const NEIGHBOR_MAX_DIST = 125;
 
@@ -63,9 +47,7 @@ export const getCaptureTargets = (
   tribeId: string
 ): Set<number> => {
   void tribes;
-  const ownedIds = new Set(
-    sectors.filter((s) => s.ownerId === tribeId).map((s) => s.id)
-  );
+  const ownedIds = new Set(sectors.filter((s) => s.ownerId === tribeId).map((s) => s.id));
   const result = new Set<number>();
 
   for (const ownedId of ownedIds) {
@@ -73,12 +55,9 @@ export const getCaptureTargets = (
     if (!neighbors) continue;
     for (const neighborId of neighbors) {
       const sector = sectors.find((s) => s.id === neighborId);
-      if (sector && sector.ownerId === null) {
-        result.add(neighborId);
-      }
+      if (sector && sector.ownerId === null) result.add(neighborId);
     }
   }
-
   return result;
 };
 
@@ -98,6 +77,7 @@ interface GameStore extends GameState {
   capturesThisTurn: number;
   expansionLevel: number;
   mapExpanded: boolean;
+  incomeCollectedThisTurn: boolean;
 
   nextTurn: () => void;
   setCurrentTribe: (tribeId: string) => void;
@@ -108,12 +88,7 @@ interface GameStore extends GameState {
   collectIncome: (tribeId: string) => Partial<Record<ResourceType, number>>;
   rollDice: () => GameEvent | null;
   applyEvent: (eventId: string) => void;
-  makeTrade: (
-    fromTribeId: string,
-    toTribeId: string,
-    given: Partial<Record<ResourceType, number>>,
-    received: Partial<Record<ResourceType, number>>
-  ) => boolean;
+  makeTrade: (fromTribeId: string, toTribeId: string, given: Partial<Record<ResourceType, number>>, received: Partial<Record<ResourceType, number>>) => boolean;
   checkGameEnd: () => boolean;
   endGame: () => void;
   refreshMonopolies: () => void;
@@ -124,11 +99,7 @@ interface GameStore extends GameState {
   listSectorForSale: (sectorId: number, price: number) => boolean;
   cancelSectorListing: (listingId: string) => boolean;
   buySector: (listingId: string) => boolean;
-  proposeSectorExchange: (
-    sector1Id: number,
-    sector2Id: number,
-    additionalPayment?: { fromId: string; toId: string; amount: number }
-  ) => string | null;
+  proposeSectorExchange: (sector1Id: number, sector2Id: number, additionalPayment?: { fromId: string; toId: string; amount: number }) => string | null;
   acceptSectorExchange: (exchangeId: string) => boolean;
   rejectSectorExchange: (exchangeId: string) => boolean;
 
@@ -140,25 +111,21 @@ interface GameStore extends GameState {
 }
 
 const BIOME_BASE_INCOME: Record<BiomeType, Partial<Record<ResourceType, number>>> = {
-  forest: { fur: 1 },
-  mountain: { ore: 1 },
-  coast: { food: 1 },
-  plain: { food: 1 },
-  silk_road: { money: 1 },
+  forest: { fur: 1 }, mountain: { ore: 1 }, coast: { food: 1 }, plain: { food: 1 }, silk_road: { money: 1 },
 };
 
 const buildingsCatalog: Building[] = [
-  { id: 'fort', type: 'fort', name: 'Острог', icon: '🏰', cost: { fur: 3, ore: 2 }, income: { fur: 2, food: 1 }, score: 2, allowedBiomes: null, description: 'Базовое поселение.' },
+  { id: 'fort', type: 'fort', name: 'Острог', icon: '', cost: { fur: 3, ore: 2 }, income: { fur: 2, food: 1 }, score: 2, allowedBiomes: null, description: 'Базовое поселение.' },
   { id: 'factory', type: 'factory', name: 'Фактория', icon: '🏪', cost: { fabric: 4, ore: 2 }, income: { money: 3 }, score: 3, allowedBiomes: ['forest', 'coast'], description: 'Торговый пост.' },
   { id: 'mission', type: 'mission', name: 'Миссия', icon: '⛪', cost: { fabric: 3, food: 3 }, income: {}, score: 2, allowedBiomes: null, description: 'Религиозный центр.' },
   { id: 'shipyard', type: 'shipyard', name: 'Верфь', icon: '🚢', cost: { ore: 5, fur: 3 }, income: { money: 2 }, score: 4, allowedBiomes: ['coast'], description: 'Строительство кораблей.' },
   { id: 'stable', type: 'stable', name: 'Конный двор', icon: '🐎', cost: { food: 4, fabric: 2 }, income: { fur: 2 }, score: 2, allowedBiomes: ['plain'], description: 'Разведение лошадей.' },
   { id: 'customs', type: 'customs', name: 'Таможня', icon: '🏛️', cost: { money: 5, ore: 3, fabric: 2 }, income: { money: 3 }, score: 5, allowedBiomes: ['silk_road'], description: 'Сбор пошлин.' },
-  { id: 'caravanserai', type: 'caravanserai', name: 'Караван-сарай', icon: '🐫', cost: { fabric: 4, food: 3 }, income: { money: 2 }, score: 4, allowedBiomes: ['plain', 'silk_road'], description: 'Гостиница для купцов.' },
+  { id: 'caravanserai', type: 'caravanserai', name: 'Караван-сарай', icon: '', cost: { fabric: 4, food: 3 }, income: { money: 2 }, score: 4, allowedBiomes: ['plain', 'silk_road'], description: 'Гостиница для купцов.' },
 ];
 
 const eventsCatalog: GameEvent[] = [
-  { id: 'good_hunt', name: 'Удачная охота', description: 'Ваши охотники вернулись с богатой добычей!', icon: '🦊', type: 'positive', effect: { fur: 3 } },
+  { id: 'good_hunt', name: 'Удачная охота', description: 'Ваши охотники вернулись с богатой добычей!', icon: '', type: 'positive', effect: { fur: 3 } },
   { id: 'ore_discovery', name: 'Открытие месторождения', description: 'На ваших землях найдена руда!', icon: '⚒️', type: 'positive', effect: { ore: 3 } },
   { id: 'trade_caravan', name: 'Торговый караван', description: 'К вам прибыл торговый караван.', icon: '🐫', type: 'positive', effect: { fabric: 2, money: 2 } },
   { id: 'good_harvest', name: 'Богатый урожай', description: 'Урожай был особенно хорошим.', icon: '🌾', type: 'positive', effect: { food: 4 } },
@@ -176,6 +143,7 @@ const MAX_TURNS = 10;
 const MAX_CAPTURES_PER_TURN = 2;
 const MIN_FREE_SECTORS = 8;
 
+// === КООРДИНАТЫ СЕКТОРОВ (Сдвинуты вниз: +40px по Y) ===
 const initialGameState: GameState = {
   turn: 1,
   tribes: [
@@ -185,37 +153,39 @@ const initialGameState: GameState = {
     { id: 't4', name: 'Артель Демидовых', color: '#f87171', resources: { fur: 5, ore: 5, fabric: 5, food: 5, money: 10 }, sectors: [6], buildings: [], score: 0 },
   ],
   sectors: [
-    // СИБИРЬ
-    { id: 0, type: 'forest', ownerId: 't1', buildingId: null, x: 80, y: 80 },
-    { id: 1, type: 'mountain', ownerId: null, buildingId: null, x: 190, y: 80 },
-    { id: 2, type: 'mountain', ownerId: null, buildingId: null, x: 300, y: 80 },
-    { id: 3, type: 'mountain', ownerId: null, buildingId: null, x: 410, y: 80 },
-    { id: 4, type: 'forest', ownerId: null, buildingId: null, x: 135, y: 185 },
-    { id: 5, type: 'plain', ownerId: null, buildingId: null, x: 245, y: 185 },
-    { id: 6, type: 'mountain', ownerId: 't4', buildingId: null, x: 355, y: 185 },
-    { id: 7, type: 'forest', ownerId: null, buildingId: null, x: 465, y: 185 },
-    { id: 8, type: 'forest', ownerId: null, buildingId: null, x: 80, y: 290 },
-    { id: 9, type: 'mountain', ownerId: null, buildingId: null, x: 190, y: 290 },
-    // РУССКАЯ АМЕРИКА
-    { id: 10, type: 'coast', ownerId: null, buildingId: null, x: 580, y: 80 },
-    { id: 11, type: 'coast', ownerId: null, buildingId: null, x: 690, y: 80 },
-    { id: 12, type: 'forest', ownerId: null, buildingId: null, x: 580, y: 185 },
-    { id: 13, type: 'mountain', ownerId: null, buildingId: null, x: 690, y: 185 },
-    { id: 14, type: 'coast', ownerId: 't2', buildingId: null, x: 580, y: 290 },
-    { id: 15, type: 'forest', ownerId: null, buildingId: null, x: 690, y: 290 },
-    { id: 16, type: 'coast', ownerId: null, buildingId: null, x: 580, y: 395 },
-    { id: 17, type: 'mountain', ownerId: null, buildingId: null, x: 690, y: 395 },
-    // ЗАКАВКАЗЬЕ И ТУРКЕСТАН
-    { id: 18, type: 'silk_road', ownerId: null, buildingId: null, x: 860, y: 80 },
-    { id: 19, type: 'plain', ownerId: null, buildingId: null, x: 970, y: 80 },
-    { id: 20, type: 'mountain', ownerId: null, buildingId: null, x: 1080, y: 80 },
-    { id: 21, type: 'silk_road', ownerId: 't3', buildingId: null, x: 860, y: 185 },
-    { id: 22, type: 'plain', ownerId: null, buildingId: null, x: 970, y: 185 },
-    { id: 23, type: 'forest', ownerId: null, buildingId: null, x: 1080, y: 185 },
-    { id: 24, type: 'mountain', ownerId: null, buildingId: null, x: 860, y: 290 },
-    { id: 25, type: 'silk_road', ownerId: null, buildingId: null, x: 970, y: 290 },
-    { id: 26, type: 'coast', ownerId: null, buildingId: null, x: 1080, y: 290 },
-    { id: 27, type: 'forest', ownerId: null, buildingId: null, x: 970, y: 395 },
+    // СИБИРЬ (y сдвинуты на +40)
+    { id: 0, type: 'forest', ownerId: 't1', buildingId: null, x: 80, y: 120 },
+    { id: 1, type: 'mountain', ownerId: null, buildingId: null, x: 190, y: 120 },
+    { id: 2, type: 'mountain', ownerId: null, buildingId: null, x: 300, y: 120 },
+    { id: 3, type: 'mountain', ownerId: null, buildingId: null, x: 410, y: 120 },
+    { id: 4, type: 'forest', ownerId: null, buildingId: null, x: 135, y: 225 },
+    { id: 5, type: 'plain', ownerId: null, buildingId: null, x: 245, y: 225 },
+    { id: 6, type: 'mountain', ownerId: 't4', buildingId: null, x: 355, y: 225 },
+    { id: 7, type: 'forest', ownerId: null, buildingId: null, x: 465, y: 225 },
+    { id: 8, type: 'forest', ownerId: null, buildingId: null, x: 80, y: 330 },
+    { id: 9, type: 'mountain', ownerId: null, buildingId: null, x: 190, y: 330 },
+
+    // РУССКАЯ АМЕРИКА (y сдвинуты на +40)
+    { id: 10, type: 'coast', ownerId: null, buildingId: null, x: 580, y: 120 },
+    { id: 11, type: 'coast', ownerId: null, buildingId: null, x: 690, y: 120 },
+    { id: 12, type: 'forest', ownerId: null, buildingId: null, x: 580, y: 225 },
+    { id: 13, type: 'mountain', ownerId: null, buildingId: null, x: 690, y: 225 },
+    { id: 14, type: 'coast', ownerId: 't2', buildingId: null, x: 580, y: 330 },
+    { id: 15, type: 'forest', ownerId: null, buildingId: null, x: 690, y: 330 },
+    { id: 16, type: 'coast', ownerId: null, buildingId: null, x: 580, y: 435 },
+    { id: 17, type: 'mountain', ownerId: null, buildingId: null, x: 690, y: 435 },
+
+    // ЗАКАВКАЗЬЕ И ТУРКЕСТАН (y сдвинуты на +40)
+    { id: 18, type: 'silk_road', ownerId: null, buildingId: null, x: 860, y: 120 },
+    { id: 19, type: 'plain', ownerId: null, buildingId: null, x: 970, y: 120 },
+    { id: 20, type: 'mountain', ownerId: null, buildingId: null, x: 1080, y: 120 },
+    { id: 21, type: 'silk_road', ownerId: 't3', buildingId: null, x: 860, y: 225 },
+    { id: 22, type: 'plain', ownerId: null, buildingId: null, x: 970, y: 225 },
+    { id: 23, type: 'forest', ownerId: null, buildingId: null, x: 1080, y: 225 },
+    { id: 24, type: 'mountain', ownerId: null, buildingId: null, x: 860, y: 330 },
+    { id: 25, type: 'silk_road', ownerId: null, buildingId: null, x: 970, y: 330 },
+    { id: 26, type: 'coast', ownerId: null, buildingId: null, x: 1080, y: 330 },
+    { id: 27, type: 'forest', ownerId: null, buildingId: null, x: 970, y: 435 },
   ],
   buildings: buildingsCatalog,
   events: eventsCatalog,
@@ -230,7 +200,13 @@ const initialGameState: GameState = {
   logs: [],
   sectorListings: [],
   sectorExchanges: [],
+  incomeCollectedThisTurn: false,
 };
+
+// Сдвигаем все стартовые тайлы вниз на MAP_Y_SHIFT
+for (const s of initialGameState.sectors) {
+  s.y += MAP_Y_SHIFT;
+}
 
 const REGION_DEFS = [
   { key: 'siberia', title: 'Сибирь', icon: '🌲', sectors: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9], scoreBonus: 8, moneyIncome: 3 },
@@ -268,6 +244,7 @@ export const useGameStore = create<GameStore>()(
       capturesThisTurn: 0,
       expansionLevel: 0,
       mapExpanded: false,
+      incomeCollectedThisTurn: false,
 
       addLog: (action, details, tribeId = null) => {
         const state = get();
@@ -286,6 +263,8 @@ export const useGameStore = create<GameStore>()(
 
       collectIncome: (tribeId) => {
         const state = get();
+        if (state.incomeCollectedThisTurn) return state.lastIncome || {};
+
         const tribe = state.tribes.find((t) => t.id === tribeId);
         if (!tribe) return {};
         const income: Partial<Record<ResourceType, number>> = {};
@@ -327,6 +306,7 @@ export const useGameStore = create<GameStore>()(
             return { ...t, resources: newResources };
           }),
           lastIncome: income,
+          incomeCollectedThisTurn: true,
         }));
         get().saveGame();
         return income;
@@ -384,7 +364,7 @@ export const useGameStore = create<GameStore>()(
           trades: [...state.trades, { id: `trade_${Date.now()}`, turn: state.turn, fromTribeId, toTribeId, given, received }],
         });
 
-        const RESOURCE_NAMES: Record<string, string> = { fur: '🦊', ore: '⚒️', fabric: '🧵', food: '🍞', money: '💰' };
+        const RESOURCE_NAMES: Record<string, string> = { fur: '🦊', ore: '⚒️', fabric: '', food: '🍞', money: '💰' };
         const gStr = Object.entries(given).map(([r, a]) => `${RESOURCE_NAMES[r]}${a}`).join(' ');
         const rStr = Object.entries(received).map(([r, a]) => `${RESOURCE_NAMES[r]}${a}`).join(' ');
         get().addLog('trade', `↔ ${toTribe.name}: отдал ${gStr}, получил ${rStr}`, fromTribeId);
@@ -402,7 +382,12 @@ export const useGameStore = create<GameStore>()(
         const nextTribeId = tribeIds[nextIndex];
         const newTurn = nextTribeId === 't1' ? state.turn + 1 : state.turn;
 
-        set({ turn: newTurn, currentTribeId: nextTribeId, capturesThisTurn: 0 });
+        set({
+          turn: newTurn,
+          currentTribeId: nextTribeId,
+          capturesThisTurn: 0,
+          incomeCollectedThisTurn: false,
+        });
         get().addLog('turn_start', `Ход ${newTurn}: начинает ${state.tribes.find(t => t.id === nextTribeId)?.name}`, nextTribeId);
         if (get().checkGameEnd()) get().endGame();
         get().saveGame();
@@ -433,7 +418,6 @@ export const useGameStore = create<GameStore>()(
         const sector = state.sectors.find((s) => s.id === sectorId);
         if (!sector || sector.ownerId !== null) return false;
 
-        // Проверка связности через таблицу ADJACENCY
         const validTargets = getCaptureTargets(state.sectors, state.tribes, state.currentTribeId);
         if (!validTargets.has(sectorId)) return false;
 
@@ -445,7 +429,7 @@ export const useGameStore = create<GameStore>()(
           tribes: state.tribes.map((t) => t.id === state.currentTribeId ? { ...t, sectors: [...t.sectors, sectorId] } : t),
           capturesThisTurn: state.capturesThisTurn + 1,
         });
-        get().addLog('capture', `⚔️ Захватил сектор #${sectorId} (${sector.type})`, state.currentTribeId);
+        get().addLog('capture', `️ Захватил сектор #${sectorId} (${sector.type})`, state.currentTribeId);
         get().refreshMonopolies();
         get().saveGame();
         return true;
@@ -537,84 +521,59 @@ export const useGameStore = create<GameStore>()(
         const state = get();
         const level = state.expansionLevel;
         const startId = state.sectors.length;
-
-        // Базовая позиция нового кластера (правее Закавказья)
         const baseX = 1200 + level * 280;
 
-        // 8 новых секторов: 4 пары по 2 тайла для равномерного доступа
+        // Координаты новых тайлов также сдвинуты вниз (согласованы с основной картой)
+
+
         const extra: Sector[] = [
-          // Пара 1: Сибирский кластер (мост от Сибири)
-          { id: startId,     type: 'forest',   ownerId: null, buildingId: null, x: baseX,      y: 60 },
-          { id: startId + 1, type: 'mountain', ownerId: null, buildingId: null, x: baseX + 110, y: 60 },
-          // Пара 2: Американский кластер (мост от Америки)
-          { id: startId + 2, type: 'coast',    ownerId: null, buildingId: null, x: baseX,      y: 185 },
-          { id: startId + 3, type: 'forest',   ownerId: null, buildingId: null, x: baseX + 110, y: 185 },
-          // Пара 3: Закавказский кластер (мост от Закавказья)
-          { id: startId + 4, type: 'silk_road', ownerId: null, buildingId: null, x: baseX,      y: 310 },
-          { id: startId + 5, type: 'plain',    ownerId: null, buildingId: null, x: baseX + 110, y: 310 },
-          // Пара 4: Центральный хаб (связывает все три кластера)
-          { id: startId + 6, type: 'mountain', ownerId: null, buildingId: null, x: baseX + 55,  y: 122 },
-          { id: startId + 7, type: 'coast',    ownerId: null, buildingId: null, x: baseX + 55,  y: 248 },
+          { id: startId,     type: 'forest',    ownerId: null, buildingId: null, x: baseX,       y: 60  + MAP_Y_SHIFT },
+          { id: startId + 1, type: 'mountain',  ownerId: null, buildingId: null, x: baseX + 110, y: 60  + MAP_Y_SHIFT },
+          { id: startId + 2, type: 'coast',     ownerId: null, buildingId: null, x: baseX,       y: 185 + MAP_Y_SHIFT },
+          { id: startId + 3, type: 'forest',    ownerId: null, buildingId: null, x: baseX + 110, y: 185 + MAP_Y_SHIFT },
+          { id: startId + 4, type: 'silk_road', ownerId: null, buildingId: null, x: baseX,       y: 310 + MAP_Y_SHIFT },
+          { id: startId + 5, type: 'plain',     ownerId: null, buildingId: null, x: baseX + 110, y: 310 + MAP_Y_SHIFT },
+          { id: startId + 6, type: 'mountain',  ownerId: null, buildingId: null, x: baseX + 55,  y: 122 + MAP_Y_SHIFT },
+          { id: startId + 7, type: 'coast',     ownerId: null, buildingId: null, x: baseX + 55,  y: 248 + MAP_Y_SHIFT },
         ];
 
-        // === ДИНАМИЧЕСКОЕ ОБНОВЛЕНИЕ ADJACENCY ===
         const newAdj: Record<number, number[]> = {};
+        newAdj[startId] = [startId + 1, startId + 6];
+        newAdj[startId + 1] = [startId, startId + 6];
+        newAdj[startId + 2] = [startId + 3, startId + 6, startId + 7];
+        newAdj[startId + 3] = [startId + 2, startId + 6, startId + 7];
+        newAdj[startId + 4] = [startId + 5, startId + 7];
+        newAdj[startId + 5] = [startId + 4, startId + 7];
+        newAdj[startId + 6] = [startId, startId + 1, startId + 2, startId + 3, startId + 7];
+        newAdj[startId + 7] = [startId + 2, startId + 3, startId + 4, startId + 5, startId + 6];
 
-        // Внутренние связи пар
-        newAdj[startId]     = [startId + 1, startId + 6];         // П1 ↔ П1, П1 ↔ Хаб
-        newAdj[startId + 1] = [startId, startId + 6];             // П1 ↔ П1, П1 ↔ Хаб
-        newAdj[startId + 2] = [startId + 3, startId + 6, startId + 7]; // П2 ↔ П2, П2 ↔ Хаб
-        newAdj[startId + 3] = [startId + 2, startId + 6, startId + 7]; // П2 ↔ П2, П2 ↔ Хаб
-        newAdj[startId + 4] = [startId + 5, startId + 7];         // П3 ↔ П3, П3 ↔ Хаб
-        newAdj[startId + 5] = [startId + 4, startId + 7];         // П3 ↔ П3, П3 ↔ Хаб
-        newAdj[startId + 6] = [startId, startId + 1, startId + 2, startId + 3, startId + 7]; // Хаб ↔ П1, П2, П3
-        newAdj[startId + 7] = [startId + 2, startId + 3, startId + 4, startId + 5, startId + 6]; // Хаб ↔ П2, П3, П1
-
-        // Мосты от базовых регионов к новым кластерам
         if (level === 0) {
-          // Первое расширение: мосты от базовой карты
-          // Сибирь → Пара 1
-          newAdj[startId].push(3);
-          newAdj[startId + 1].push(7);
-          // Америка → Пара 2
-          newAdj[startId + 2].push(11);
-          newAdj[startId + 3].push(15);
-          // Закавказье → Пара 3
-          newAdj[startId + 4].push(20);
-          newAdj[startId + 5].push(23);
+          newAdj[startId].push(3); newAdj[startId + 1].push(7);
+          newAdj[startId + 2].push(11); newAdj[startId + 3].push(15);
+          newAdj[startId + 4].push(20); newAdj[startId + 5].push(23);
         } else {
-          // Последующие расширения: мосты от предыдущего кластера
           const prev = startId - 8;
-          newAdj[startId].push(prev + 1);       // П1 ← пред. П1
-          newAdj[startId + 2].push(prev + 3);   // П2 ← пред. П2
-          newAdj[startId + 4].push(prev + 5);   // П3 ← пред. П3
-          newAdj[startId + 6].push(prev + 6);   // Хаб ← пред. Хаб
-          newAdj[startId + 7].push(prev + 7);   // Хаб ← пред. Хаб
+          newAdj[startId].push(prev + 1); newAdj[startId + 2].push(prev + 3);
+          newAdj[startId + 4].push(prev + 5); newAdj[startId + 6].push(prev + 6);
+          newAdj[startId + 7].push(prev + 7);
         }
 
-        // Применяем новые связи к глобальной таблице ADJACENCY
         for (const [id, neighbors] of Object.entries(newAdj)) {
           const numId = Number(id);
           (ADJACENCY as Record<number, number[]>)[numId] = neighbors;
-          // Обратные связи
           for (const nId of neighbors) {
             if (!ADJACENCY[nId]) (ADJACENCY as Record<number, number[]>)[nId] = [];
             if (!ADJACENCY[nId].includes(numId)) ADJACENCY[nId].push(numId);
           }
         }
 
-        set({
-          sectors: [...state.sectors, ...extra],
-          expansionLevel: level + 1,
-        });
-
+        set({ sectors: [...state.sectors, ...extra], expansionLevel: level + 1 });
         get().addLog('capture', `🗺️ Карта расширена! +8 тайлов (всего: ${state.sectors.length + 8}). Уровень: ${level + 1}`, null);
         get().refreshMonopolies();
         get().saveGame();
         return true;
       },
 
-      // === РЫНОК ТЕРРИТОРИЙ ===
       calculateSectorValue: (sectorId) => {
         const state = get();
         const sector = state.sectors.find((s) => s.id === sectorId);
@@ -634,7 +593,6 @@ export const useGameStore = create<GameStore>()(
         const sector = state.sectors.find((s) => s.id === sectorId);
         if (!sector || sector.ownerId !== state.currentTribeId || price <= 0) return false;
         if (state.sectorListings.some((l) => l.sectorId === sectorId && l.active)) return false;
-
         set({ sectorListings: [...state.sectorListings, { id: `listing_${Date.now()}`, sectorId, sellerId: state.currentTribeId, price, listedTurn: state.turn, active: true }] });
         get().addLog('sector_sale', `🏷️ Выставил сектор #${sectorId} на продажу за 💰${price}`, state.currentTribeId);
         get().saveGame();
@@ -679,7 +637,6 @@ export const useGameStore = create<GameStore>()(
         const s1 = state.sectors.find((s) => s.id === sector1Id);
         const s2 = state.sectors.find((s) => s.id === sector2Id);
         if (!s1 || !s2 || s1.ownerId !== state.currentTribeId || !s2.ownerId) return null;
-
         const exchange: SectorExchange = {
           id: `exchange_${Date.now()}`, sector1Id, sector2Id,
           owner1Id: s1.ownerId!, owner2Id: s2.ownerId,
@@ -695,12 +652,10 @@ export const useGameStore = create<GameStore>()(
         const state = get();
         const ex = state.sectorExchanges.find((e) => e.id === exchangeId);
         if (!ex || ex.status !== 'pending' || ex.owner2Id !== state.currentTribeId) return false;
-
         if (ex.additionalPayment) {
           const payer = state.tribes.find((t) => t.id === ex.additionalPayment!.fromId);
           if (!payer || payer.resources.money < ex.additionalPayment.amount) return false;
         }
-
         set({
           sectors: state.sectors.map((s) => {
             if (s.id === ex.sector1Id) return { ...s, ownerId: ex.owner2Id };
@@ -714,7 +669,6 @@ export const useGameStore = create<GameStore>()(
           }),
           sectorExchanges: state.sectorExchanges.map((e) => e.id === exchangeId ? { ...e, status: 'accepted' } : e),
         });
-
         if (ex.additionalPayment) {
           set((s) => ({
             tribes: s.tribes.map((t) => {
@@ -748,7 +702,8 @@ export const useGameStore = create<GameStore>()(
           awardedMonopolyKeys: state.awardedMonopolyKeys, currentTribeId: state.currentTribeId,
           gameEnded: state.gameEnded, winnerId: state.winnerId, capturesThisTurn: state.capturesThisTurn,
           expansionLevel: state.expansionLevel, logs: state.logs, sectorListings: state.sectorListings,
-          sectorExchanges: state.sectorExchanges, savedAt: new Date().toLocaleString('ru-RU'),
+          sectorExchanges: state.sectorExchanges, incomeCollectedThisTurn: state.incomeCollectedThisTurn,
+          savedAt: new Date().toLocaleString('ru-RU'),
         }));
         set({ lastSaved: Date.now() });
       },
@@ -765,6 +720,7 @@ export const useGameStore = create<GameStore>()(
             currentTribeId: data.currentTribeId, gameEnded: data.gameEnded || false, winnerId: data.winnerId || null,
             capturesThisTurn: data.capturesThisTurn || 0, expansionLevel: data.expansionLevel || 0,
             logs: data.logs || [], sectorListings: data.sectorListings || [], sectorExchanges: data.sectorExchanges || [],
+            incomeCollectedThisTurn: data.incomeCollectedThisTurn || false,
             lastSaved: Date.now(),
           });
           get().refreshMonopolies();
@@ -777,7 +733,7 @@ export const useGameStore = create<GameStore>()(
           ...initialGameState,
           currentTribeId: 't1', lastIncome: null, gameEnded: false, winnerId: null,
           bankToast: null, capturesThisTurn: 0, expansionLevel: 0, logs: [],
-          sectorListings: [], sectorExchanges: [],
+          sectorListings: [], sectorExchanges: [], incomeCollectedThisTurn: false,
         });
       },
 

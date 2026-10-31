@@ -1,16 +1,26 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
-import { useGameStore, getCaptureTargets, REGION_BG_COLORS, ADJACENCY } from '../store/gameStore';
+import { useGameStore, getCaptureTargets, REGION_BG_COLORS, ADJACENCY, MAP_Y_SHIFT } from '../store/gameStore';
 import { HexTile } from './HexTile';
 import { BuildMenu } from './BuildMenu';
 import { SectorSaleModal } from './SectorSaleModal';
 import { SectorExchangeModal } from './SectorExchangeModal';
 import { playClick, playCapture, playError } from '../utils/sounds';
 
-// Увеличен отступ сверху (y: 40 вместо 20), чтобы названия не перекрывались тайлами
+// 🎯 Верх фона = 20 + сдвиг. Это ГАРАНТИРУЕТ, что фон накрывает тайлы сверху
+// (верх тайла = 30 + сдвиг, фон на 10px выше — тайл внутри подложки).
+const REGION_TOP = 40 + MAP_Y_SHIFT;
+const REGION_HEIGHT = 480;
+// 🎛️ Насколько ВЫШЕ верха фона стоит плашка заголовка региона.
+// Больше число = название выше. 35 = текущее положение.
+// ⚠️ Если при большом значении заголовок обрезался сверху —
+//    увеличь MAP_Y_SHIFT в gameStore.ts (он тянет REGION_TOP вниз).
+const TITLE_LIFT = 55;   // ← было эквивалентно 35, теперь поднято на 20px
+
+
 const REGION_BOUNDS = {
-  siberia:   { x: 20,  y: 40, w: 510, h: 420 },
-  america:   { x: 520, y: 40, w: 240, h: 420 },
-  turkestan: { x: 800, y: 40, w: 350, h: 420 },
+  siberia:   { x: 20,  y: REGION_TOP, w: 510, h: REGION_HEIGHT },
+  america:   { x: 520, y: REGION_TOP, w: 240, h: REGION_HEIGHT },
+  turkestan: { x: 800, y: REGION_TOP, w: 350, h: REGION_HEIGHT },
 };
 
 export const GameMap = () => {
@@ -42,12 +52,15 @@ export const GameMap = () => {
     return Math.max(1200, maxX + 300);
   }, [sectors]);
 
+  // Высота SVG растёт вместе со сдвигом, чтобы легенда/статистика не обрезались
+  const viewBoxHeight = 600 + MAP_Y_SHIFT;
+
   const expandedBounds = useMemo(() => {
     const expandedSectors = sectors.filter((s) => s.id >= 28);
     if (expandedSectors.length === 0) return null;
     const minX = Math.min(...expandedSectors.map((s) => s.x)) - 60;
     const maxX = Math.max(...expandedSectors.map((s) => s.x)) + 60;
-    return { x: minX, y: 40, w: maxX - minX, h: 420 };
+    return { x: minX, y: REGION_TOP, w: maxX - minX, h: REGION_HEIGHT };
   }, [sectors]);
 
   const bridgeLines = useMemo(() => {
@@ -127,7 +140,7 @@ export const GameMap = () => {
     const hasBuilding = sector.buildingId !== null;
     const activeListing = listings.find((l) => l.sectorId === sectorId && l.active);
     const actions: string[] = [];
-    if (!hasBuilding) actions.push('️ Построить здание');
+    if (!hasBuilding) actions.push('🏗️ Построить здание');
     actions.push(activeListing ? '🏷️ Управление продажей' : '💰 Продать сектор');
     actions.push('🔄 Предложить обмен');
     actions.push('ℹ️ Информация');
@@ -147,66 +160,64 @@ export const GameMap = () => {
 
   return (
     <div style={{ border: '2px solid #cbd5e1', borderRadius: '12px', background: '#f8fafc', marginBottom: '1rem', maxWidth: '100%', overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
-      <svg viewBox={`0 0 ${viewBoxWidth} 600`} preserveAspectRatio="xMidYMid meet" style={{ display: 'block', width: '100%', height: 'auto', minWidth: '600px' }}>
+      <svg viewBox={`0 0 ${viewBoxWidth} ${viewBoxHeight}`} preserveAspectRatio="xMidYMid meet" style={{ display: 'block', width: '100%', height: 'auto', minWidth: '600px' }}>
 
-        {/* Фоны базовых регионов с поднятыми названиями */}
+        {/* 1. ЗАГОЛОВКИ — плашка сидит ВЫШЕ верха тайлов (bounds.y-35), текст в ней */}
         {Object.entries(REGION_BOUNDS).map(([key, bounds]) => (
-          <g key={key}>
-            {/* Фон региона */}
+          <g key={`title-${key}`}>
             <rect
-              x={bounds.x}
-              y={bounds.y}
-              width={bounds.w}
-              height={bounds.h}
-              rx="16"
-              ry="16"
-              fill={REGION_BG_COLORS[key]}
+              x={bounds.x + bounds.w / 2 - 85}
+              y={bounds.y -  TITLE_LIFT}
+              width="200"
+              height="38"
+              rx="19"
+              fill="#ffffff"
               stroke="#cbd5e1"
-              strokeWidth="1"
-              strokeDasharray="6 3"
+              strokeWidth="2"
               style={{ pointerEvents: 'none' }}
             />
-
-            {/* Название региона НАД регионом */}
-            <g>
-              {/* Белая подложка для текста */}
-              <rect
-                x={bounds.x + bounds.w / 2 - 75}
-                y={bounds.y - 35}  // Над регионом
-                width="150"
-                height="30"
-                rx="15"
-                fill="white"
-                opacity="0.9"
-                stroke="#e2e8f0"
-                strokeWidth="1"
-                style={{ pointerEvents: 'none' }}
-              />
-
-              {/* Текст названия */}
-              <text
-                x={bounds.x + bounds.w / 2}
-                y={bounds.y - 15}  // Центрируем по вертикали в подложке
-                textAnchor="middle"
-                fontSize="15"
-                fontWeight="bold"
-                fill="#1e293b"
-                style={{ pointerEvents: 'none', userSelect: 'none' }}
-              >
-                {key === 'siberia' ? '🌲 СИБИРЬ' : key === 'america' ? '🌊 РУССКАЯ АМЕРИКА' : '🐫 ЗАКАВКАЗЬЕ'}
-              </text>
-            </g>
+            <text
+              x={5+bounds.x + bounds.w / 2}
+              y={bounds.y -  TITLE_LIFT+24}
+              textAnchor="middle"
+              fontSize="15"
+              fontWeight="bold"
+              fill="#0f172a"
+              style={{ pointerEvents: 'none', userSelect: 'none' }}
+            >
+              {key === 'siberia' ? '🌲 СИБИРЬ' : key === 'america' ? '🌊 РУССКАЯ АМЕРИКА' : '🐫 ЗАКАВКАЗЬЕ'}
+            </text>
           </g>
         ))}
-        {/* Фон расширенной области */}
+
+        {/* 2. ФОНЫ РЕГИОНОВ — накрывают тайлы сверху и снизу */}
+        {Object.entries(REGION_BOUNDS).map(([key, bounds]) => (
+          <rect
+            key={`bg-${key}`}
+            x={bounds.x}
+            y={bounds.y}
+            width={bounds.w}
+            height={bounds.h}
+            rx="16"
+            ry="16"
+            fill={REGION_BG_COLORS[key]}
+            stroke="#cbd5e1"
+            strokeWidth="1"
+            strokeDasharray="6 3"
+            style={{ pointerEvents: 'none' }}
+          />
+        ))}
+
+        {/* 3. ФОН + ЗАГОЛОВОК НОВЫХ ЗЕМЕЛЬ */}
         {expandedBounds && (
           <g>
+            <rect x={expandedBounds.x + expandedBounds.w / 2 - 75} y={expandedBounds.y - 35} width="150" height="38" rx="19" fill="#ffffff" stroke="#cbd5e1" strokeWidth="2" style={{ pointerEvents: 'none' }} />
+            <text x={expandedBounds.x + expandedBounds.w / 2} y={expandedBounds.y - 10} textAnchor="middle" fontSize="15" fontWeight="bold" fill="#64748b" style={{ pointerEvents: 'none' }}>🗺️ НОВЫЕ ЗЕМЛИ</text>
             <rect x={expandedBounds.x} y={expandedBounds.y} width={expandedBounds.w} height={expandedBounds.h} rx="16" ry="16" fill="#f1f5f9" stroke="#cbd5e1" strokeWidth="1" strokeDasharray="6 3" style={{ pointerEvents: 'none' }} />
-            <text x={expandedBounds.x + expandedBounds.w / 2} y={expandedBounds.y + 24} textAnchor="middle" fontSize="14" fontWeight="bold" fill="#94a3b8" opacity="0.8" style={{ pointerEvents: 'none' }}>🗺️ НОВЫЕ ЗЕМЛИ</text>
           </g>
         )}
 
-        {/* Мосты ТОЛЬКО к/от новых земель */}
+        {/* 4. МОСТЫ */}
         {visibleBridges.map((line) => (
           <line
             key={line.key}
@@ -219,21 +230,22 @@ export const GameMap = () => {
           />
         ))}
 
-        <text x="20" y="545" style={{ fontSize: '14px', fontWeight: 'bold', fill: '#1e293b' }}>🗺️ Карта Империи</text>
-        <text x={viewBoxWidth - 20} y="545" textAnchor="end" style={{ fontSize: '12px', fontWeight: 'bold', fill: '#475569' }}>Захватов: {capturesThisTurn}/2 · Свободно: {freeCount} · Целей: {targets.size}</text>
+        {/* 5. СТАТИСТИКА И ЛЕГЕНДА — сдвинуты вниз на MAP_Y_SHIFT */}
+        <text x="20" y={585 + MAP_Y_SHIFT} style={{ fontSize: '14px', fontWeight: 'bold', fill: '#1e293b' }}>🗺️ Карта Империи</text>
+        <text x="20" y={598 + MAP_Y_SHIFT} style={{ fontSize: '12px', fill: '#475569' }}>Захватов: {capturesThisTurn}/2 · Свободно: {freeCount} · Целей: {targets.size}</text>
 
-        {/* Легенда */}
-        <rect x={viewBoxWidth - 180} y={540} width="170" height="65" rx="8" fill="white" stroke="#cbd5e1" strokeWidth="1" />
-        <text x={viewBoxWidth - 170} y={545} fontSize="11" fontWeight="bold">Легенда мостов:</text>
-        <line x1={viewBoxWidth - 170} y1={555} x2={viewBoxWidth - 150} y2={515} stroke="#22c55e" strokeWidth="3" strokeDasharray="8 4" />
-        <text x={viewBoxWidth - 145} y={558} fontSize="10">🌲 Сибирь → Новые</text>
-        <line x1={viewBoxWidth - 170} y1={570} x2={viewBoxWidth - 150} y2={530} stroke="#3b82f6" strokeWidth="3" strokeDasharray="8 4" />
-        <text x={viewBoxWidth - 145} y={573} fontSize="10">🌊 Америка → Новые</text>
-        <line x1={viewBoxWidth - 170} y1={585} x2={viewBoxWidth - 150} y2={545} stroke="#f59e0b" strokeWidth="3" strokeDasharray="8 4" />
-        <text x={viewBoxWidth - 145} y={588} fontSize="10">🐫 Закавказье → Новые</text>
-        <line x1={viewBoxWidth - 170} y1={600} x2={viewBoxWidth - 150} y2={560} stroke="#8b5cf6" strokeWidth="3" strokeDasharray="8 4" />
-        <text x={viewBoxWidth - 145} y={603} fontSize="10"> Внутри новых</text>
+        <g transform={`translate(${viewBoxWidth - 220}, ${520 + MAP_Y_SHIFT})`}>
+          <rect x="0" y="0" width="210" height="75" rx="8" fill="white" stroke="#cbd5e1" strokeWidth="2" />
+          <text x="10" y="20" fontSize="13" fontWeight="bold" fill="#1e293b">🌉 Легенда связей:</text>
+          <line x1="10" y1="35" x2="40" y2="35" stroke="#22c55e" strokeWidth="4" strokeDasharray="8 4" />
+          <text x="50" y="39" fontSize="12" fill="#334155">🌲 Сибирь → Новые</text>
+          <line x1="10" y1="50" x2="40" y2="50" stroke="#3b82f6" strokeWidth="4" strokeDasharray="8 4" />
+          <text x="50" y="54" fontSize="12" fill="#334155">🌊 Америка → Новые</text>
+          <line x1="10" y1="65" x2="40" y2="65" stroke="#f59e0b" strokeWidth="4" strokeDasharray="8 4" />
+          <text x="50" y="69" fontSize="12" fill="#334155">🐫 Закавказье → Новые</text>
+        </g>
 
+        {/* 6. ТАЙЛЫ — поверх фона */}
         {sectors.map((sector) => {
           const owner = tribes.find((t) => t.id === sector.ownerId);
           const building = buildings.find((b) => b.id === sector.buildingId);

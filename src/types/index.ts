@@ -170,6 +170,7 @@ export interface GameState {
   lastEvent: GameEvent | null;
   expansionLevel: number;
   logs: LogEntry[];
-  sectorListings: SectorListing[]; // НОВОЕ
-  sectorExchanges: SectorExchange[]; // НОВОЕ
+  sectorListings: SectorListing[];
+  sectorExchanges: SectorExchange[];
+  incomeCollectedThisTurn: boolean; // 🛡️ ДОБАВЬТЕ ЭТУ СТРОКУ
 }
