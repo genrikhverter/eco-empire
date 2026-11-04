@@ -11,6 +11,19 @@ import { playClick, playCapture, playError } from '../utils/sounds';
 
 const WORLD_HEIGHT = 680;
 
+// Тип данных для информационного окна о связи
+interface EdgeInfoData {
+  fromId: number;
+  toId: number;
+  fromType: string;
+  toType: string;
+  fromOwner: string | null;
+  toOwner: string | null;
+  distance: number;
+  x: number; // позиция для тултипа
+  y: number;
+}
+
 export const GameMap = () => {
   const sectors = useGameStore((state) => state.sectors);
   const tribes = useGameStore((state) => state.tribes);
@@ -33,6 +46,9 @@ export const GameMap = () => {
   const [justCapturedId, setJustCapturedId] = useState<number | null>(null);
   const justCapturedTimerRef = useRef<number | null>(null);
 
+  // 🌉 Состояние для показа информации о связи
+  const [edgeInfo, setEdgeInfo] = useState<EdgeInfoData | null>(null);
+
   const currentTribe = tribes.find((t) => t.id === currentTribeId);
   const freeCount = sectors.filter((s) => s.ownerId === null).length;
 
@@ -47,14 +63,14 @@ export const GameMap = () => {
     return Math.max(1200, maxX + 160);
   }, [sectors]);
 
-  // 🔗 ВСЕ рёбра графа ADJACENCY (зависит от adjacencyVersion -> мгновенная перерисовка)
+  // 🔗 ВСЕ рёбра графа ADJACENCY
   const bridgeLines = useMemo(() => {
     const lines: { key: string; x1: number; y1: number; x2: number; y2: number; fromId: number; toId: number }[] = [];
     for (const sector of sectors) {
       const neighbors = ADJACENCY[sector.id];
       if (!neighbors) continue;
       for (const neighborId of neighbors) {
-        if (neighborId <= sector.id) continue; // ребро рисуем один раз
+        if (neighborId <= sector.id) continue; // рисуем ребро один раз
         const neighbor = sectors.find((s) => s.id === neighborId);
         if (!neighbor) continue;
         lines.push({
@@ -81,7 +97,7 @@ export const GameMap = () => {
     };
   }, []);
 
-  // Общий парсер двух номеров тайлов из prompt-строки (используется и в связывании, и в разрыве)
+  // Общий парсер двух номеров тайлов из prompt-строки
   const parseTwoIds = (raw: string): { ok: true; a: number; b: number } | { ok: false; msg: string } => {
     const nums = raw.split(/[\s,;]+/).filter(Boolean).map(Number);
     if (nums.length < 2) return { ok: false, msg: '⛔ Введите два номера тайлов, например: 3 10' };
@@ -126,7 +142,7 @@ export const GameMap = () => {
     }
   };
 
-  // ✂️ Диалог УДАЛЕНИЯ связи по двум номерам (зеркальный алгоритм)
+  // ✂️ Диалог УДАЛЕНИЯ связи по двум номерам
   const handleUnlinkEdges = () => {
     playClick();
     const raw = prompt(
@@ -151,6 +167,33 @@ export const GameMap = () => {
       playError();
       alert('⛔ Не удалось удалить связь.');
     }
+  };
+
+  // 🌉 Обработчик клика по линии-связи
+  const handleEdgeClick = (fromId: number, toId: number, x1: number, y1: number, x2: number, y2: number) => {
+    playClick();
+    
+    const sFrom = sectors.find((s) => s.id === fromId);
+    const sTo = sectors.find((s) => s.id === toId);
+    if (!sFrom || !sTo) return;
+
+    const dist = Math.hypot(sFrom.x - sTo.x, sFrom.y - sTo.y);
+    
+    // Позиция тултипа — середина линии, немного смещённая вверх
+    const midX = (x1 + x2) / 2;
+    const midY = (y1 + y2) / 2;
+
+    setEdgeInfo({
+      fromId,
+      toId,
+      fromType: sFrom.type,
+      toType: sTo.type,
+      fromOwner: sFrom.ownerId ? (tribes.find(t => t.id === sFrom.ownerId)?.name || 'Неизвестно') : null,
+      toOwner: sTo.ownerId ? (tribes.find(t => t.id === sTo.ownerId)?.name || 'Неизвестно') : null,
+      distance: Math.round(dist),
+      x: midX,
+      y: midY,
+    });
   };
 
   const handleSectorClick = (sectorId: number) => {
@@ -212,7 +255,7 @@ export const GameMap = () => {
   return (
     <div style={{ position: 'relative', border: '2px solid #cbd5e1', borderRadius: '12px', background: '#f8fafc', marginBottom: '1rem', maxWidth: '100%', overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
 
-      {/* Оверлей управления режимом раскладки (HTML поверх Stage) */}
+      {/* Оверлей управления режимом раскладки */}
       <div style={{ position: 'absolute', top: 10, right: 10, zIndex: 10, display: 'flex', gap: '0.5rem', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
         {editable && (
           <>
@@ -260,21 +303,77 @@ export const GameMap = () => {
           padding: '0.4rem 0.7rem', borderRadius: '8px', fontSize: '0.78rem', maxWidth: '340px',
           boxShadow: '0 2px 6px rgba(0,0,0,0.15)', pointerEvents: 'none',
         }}>
-          Тяни тайлы мышью/пальцем · «🔗 Связать» и «✂️ Разорвать» — введи два номера (#a #b).
+          Тяни тайлы мышью/пальцем · «🔗 Связать» и «✂️ Разорвать» — введи два номера (#a #b).<br/>
+          💡 Кликни по линии-мосту, чтобы узнать детали связи.
+        </div>
+      )}
+
+      {/* 🌉 Информационное окно о связи (HTML-оверлей) */}
+      {edgeInfo && (
+        <div 
+          style={{
+            position: 'absolute',
+            // Позиционируем относительно контейнера div, а не SVG координат напрямую.
+            // Для простоты PoC используем fixed позиционирование относительно центра экрана или примерные координаты.
+            // Идеально было бы преобразовать Konva coords -> Screen coords, но для MVP достаточно center.
+            top: '50%',
+            left: '50%',
+            transform: 'translate(-50%, -50%)',
+            zIndex: 2000,
+            background: 'white',
+            border: '2px solid #3b82f6',
+            borderRadius: '12px',
+            padding: '1rem',
+            minWidth: '250px',
+            boxShadow: '0 10px 25px rgba(0,0,0,0.2)',
+          }}
+        >
+          <h3 style={{ margin: '0 0 0.5rem 0', fontSize: '1rem', color: '#1e293b', textAlign: 'center' }}>
+            🌉 Детали связи
+          </h3>
+          
+          <div style={{ fontSize: '0.9rem', color: '#475569', lineHeight: 1.5 }}>
+            <div><strong>От:</strong> Тайл #{edgeInfo.fromId} ({edgeInfo.fromType})</div>
+            <div><strong>До:</strong> Тайл #{edgeInfo.toId} ({edgeInfo.toType})</div>
+            <hr style={{ border: 0, borderTop: '1px dashed #cbd5e1', margin: '0.5rem 0' }} />
+            <div><strong>Владелец А:</strong> {edgeInfo.fromOwner || 'Ничейный'}</div>
+            <div><strong>Владелец Б:</strong> {edgeInfo.toOwner || 'Ничейный'}</div>
+            <div><strong>Расстояние:</strong> ~{edgeInfo.distance}px</div>
+          </div>
+
+          <button
+            onClick={() => setEdgeInfo(null)}
+            style={{
+              marginTop: '0.8rem', width: '100%', padding: '0.5rem',
+              background: '#e2e8f0', color: '#1e293b', border: 'none', borderRadius: '6px',
+              fontSize: '0.85rem', fontWeight: 'bold', cursor: 'pointer',
+            }}
+          >
+            Закрыть
+          </button>
         </div>
       )}
 
       <Stage width={worldWidth} height={WORLD_HEIGHT}>
 
-        {/* СЛОЙ 1 — ВСЕ связи секторов (тянутся за тайлами при drag) */}
-        <Layer listening={false}>
+        {/* СЛОЙ 1 — ВСЕ связи секторов (теперь интерактивные!) */}
+        <Layer>
           {bridgeLines.map((line) => (
             <Line
               key={line.key}
               points={[line.x1, line.y1, line.x2, line.y2]}
               stroke={getEdgeColor(line.fromId)}
-              strokeWidth={2.5}
-              opacity={0.55}
+              strokeWidth={3}
+              opacity={0.6}
+              hitStrokeWidth={15} // ⬅️ ВАЖНО: увеличивает зону клика вокруг тонкой линии
+              onClick={(e) => {
+                e.cancelBubble = true; // предотвращаем propagation к фону/тайлам, если нужно
+                handleEdgeClick(line.fromId, line.toId, line.x1, line.y1, line.x2, line.y2);
+              }}
+              onTap={(e) => {
+                e.cancelBubble = true;
+                handleEdgeClick(line.fromId, line.toId, line.x1, line.y1, line.x2, line.y2);
+              }}
             />
           ))}
         </Layer>
